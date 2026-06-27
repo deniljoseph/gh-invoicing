@@ -19,6 +19,9 @@ IMAGES_DIR  = os.path.join(BASE_DIR, "static", "images")
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+@app.route("/")
+def home():
+    return "OK", 200
 
 for d in [ARCHIVE_DIR, IMAGES_DIR,
           os.path.join(UPLOAD_DIR,"logos"),
