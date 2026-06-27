@@ -1,0 +1,386 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Edit' if mode=='edit' else 'New' }} Invoice{% endblock %}
+{% block pt %}{{ 'Edit Invoice' if mode=='edit' else 'New Invoice' }}{% endblock %}
+{% block xh %}<link href="{{ url_for('static', filename='css/form.css') }}" rel="stylesheet">{% endblock %}
+{% block content %}
+<form method="POST" id="invForm">
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div style="font-size:15px;font-weight:700;">
+    {% if mode=='edit' %}<span class="badge bg-warning text-dark me-2">Editing</span>{% endif %}
+    <span id="invNumDisplay">{{ inv_num }}</span>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('invoices') }}" class="btn btn-sm btn-outline-secondary">Cancel</a>
+    <button type="submit" class="btn btn-sm ba px-4"><i class="bi bi-save me-1"></i>Save &amp; Generate PDF</button>
+  </div>
+</div>
+
+<div class="row g-3">
+<div class="col-lg-8">
+
+  <!-- Invoice Type -->
+  <div class="sh">1. Invoice Type</div>
+  <div class="sb2">
+    <div class="d-flex gap-3 mb-3">
+      <div class="type-tab {% if inv_type=='TAX' %}active-tax{% endif %}" onclick="setType('TAX',this)">
+        <i class="bi bi-receipt me-1"></i>Tax Invoice
+      </div>
+      <div class="type-tab {% if inv_type=='PROFORMA' %}active-pro{% endif %}" onclick="setType('PROFORMA',this)">
+        <i class="bi bi-file-earmark me-1"></i>Proforma Invoice
+      </div>
+    </div>
+    <input type="hidden" name="invoice_type" id="invType" value="{{ inv_type or 'TAX' }}">
+    <div style="font-size:12px;color:#888;" id="typeHint">
+      {% if inv_type=='PROFORMA' %}Proforma invoice — not a VAT tax document{% else %}Official UAE VAT Tax Invoice{% endif %}
+    </div>
+  </div>
+
+  <!-- Company -->
+  <div class="sh">2. Select Company</div>
+  <div class="sb2">
+    <div class="d-flex gap-3 flex-wrap" id="coTabs">
+      {% for co in companies %}
+      <div class="co-tab {% if selected_co_id==co.id %}active{% endif %}" onclick="selectCo({{ co.id }},'{{ co.code }}',this)">
+        <div style="font-size:14px;">{{ co.code }}</div>
+        <div style="font-size:10px;color:#888;margin-top:2px;font-weight:400;">{{ co.name[:22] }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <input type="hidden" name="company_id" id="companyId" value="{{ selected_co_id }}">
+  </div>
+
+  <!-- Invoice Info -->
+  <div class="sh">3. Invoice Information</div>
+  <div class="sb2">
+    <div class="row g-3">
+      <div class="col-md-5">
+        <label class="form-label">Invoice Number *</label>
+        <input type="text" name="invoice_number" id="invNum" class="form-control" value="{{ inv.invoice_number if inv else inv_num }}" required>
+        <small class="text-muted">Auto-generated. Edit if needed.</small>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Billing Date * (DD-MM-YYYY)</label>
+        <input type="text" name="invoice_date" id="invDate" class="form-control" placeholder="DD-MM-YYYY"
+          value="{{ fmt_date(inv.invoice_date) if inv else '' }}" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">No. of Pages</label>
+        <input type="text" name="num_pages" class="form-control" value="{{ inv.num_pages if inv else 'One (1)' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Purchase Order No.</label>
+        <input type="text" name="purchase_order" class="form-control" value="{{ inv.purchase_order if inv else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Currency</label>
+        <select name="currency" class="form-select">
+          {% for c in ['AED','USD','EUR','GBP','SAR','QAR','KWD'] %}
+          <option value="{{ c }}" {{ 'selected' if (inv.currency if inv else 'AED')==c }}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Customer -->
+  <div class="sh">4. Customer / Billed To</div>
+  <div class="sb2">
+    <div class="mb-3 position-relative">
+      <label class="form-label">Search Existing Client</label>
+      <input type="text" id="clSearch" class="form-control" placeholder="Type to search clients…" autocomplete="off">
+      <div id="clDrop" class="list-group position-absolute w-100" style="z-index:999;display:none;max-height:200px;overflow-y:auto;"></div>
+      <input type="hidden" name="client_id" id="clId" value="{{ inv.client_id if inv else '' }}">
+    </div>
+    <div class="row g-2">
+      <div class="col-md-6"><label class="form-label">Client / Company Name *</label><input type="text" name="client_name" id="clName" class="form-control" value="{{ inv.client_name if inv else '' }}" required></div>
+      <div class="col-md-6"><label class="form-label">TRN Number</label><input type="text" name="client_trn" id="clTrn" class="form-control" value="{{ inv.client_trn if inv else '' }}"></div>
+      <div class="col-12"><label class="form-label">Address</label><input type="text" name="client_address" id="clAddr" class="form-control" value="{{ inv.client_address if inv else '' }}"></div>
+      <div class="col-md-4"><label class="form-label">Country</label><input type="text" name="client_country" id="clCountry" class="form-control" value="{{ inv.client_country if inv else 'UAE' }}"></div>
+      <div class="col-md-4"><label class="form-label">Telephone</label><input type="text" name="client_telephone" id="clTel" class="form-control" value="{{ inv.client_telephone if inv else '' }}"></div>
+      <div class="col-md-4"><label class="form-label">Email</label><input type="email" name="client_email" id="clEmail" class="form-control" value="{{ inv.client_email if inv else '' }}"></div>
+    </div>
+  </div>
+
+  <!-- Items -->
+  <div class="sh d-flex align-items-center justify-content-between">
+    <span>5. Invoice Items</span>
+    <button type="button" class="btn btn-sm ba" onclick="addRow()" style="font-size:12px;padding:3px 12px;"><i class="bi bi-plus"></i> Add Row</button>
+  </div>
+  <div class="sb2 p-0">
+    <div class="table-responsive">
+      <table class="table mb-0" id="items-tbl">
+        <thead><tr>
+          <th style="width:36px;">Sr.</th><th>Description</th>
+          <th style="width:70px;">Qty</th><th style="width:90px;">Amount</th>
+          <th style="width:96px;">Total Amt</th><th style="width:62px;">Tax %</th>
+          <th style="width:90px;">Tax Amt</th><th style="width:96px;">Total</th>
+          <th style="width:30px;"></th>
+        </tr></thead>
+        <tbody id="tbody">
+          {% for item in items %}
+          <tr>
+            <td><span class="sr" style="font-size:12px;color:#aaa;">{{ loop.index }}</span></td>
+            <td><input type="text" name="description[]" class="form-control form-control-sm" value="{{ item.description }}" required></td>
+            <td><input type="number" name="quantity[]" class="form-control form-control-sm qty" value="{{ item.quantity }}" min="0" step="0.01" oninput="calcRow(this)"></td>
+            <td><input type="number" name="amount[]" class="form-control form-control-sm amt" value="{{ item.amount }}" min="0" step="0.01" oninput="calcRow(this)"></td>
+            <td><input type="number" class="form-control form-control-sm tamt bg-light" value="{{ item.total_amount }}" readonly tabindex="-1"></td>
+            <td><input type="number" name="tax_rate[]" class="form-control form-control-sm txr" value="{{ item.tax_rate }}" min="0" max="100" step="0.1" oninput="calcRow(this)"></td>
+            <td><input type="number" class="form-control form-control-sm txamt bg-light" value="{{ item.tax_amount }}" readonly tabindex="-1"></td>
+            <td><input type="number" class="form-control form-control-sm rtot bg-light" value="{{ item.total }}" readonly tabindex="-1"></td>
+            <td><button type="button" class="btn btn-sm btn-outline-danger p-0 px-1" onclick="delRow(this)"><i class="bi bi-x"></i></button></td>
+          </tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Bank -->
+  <div class="sh">6. Bank Details</div>
+  <div class="sb2">
+    <div class="row g-2">
+      <div class="col-md-6"><label class="form-label">Bank Name</label><input type="text" name="bank_name" class="form-control" value="{{ inv.bank_name if inv else s.get('bank_name','') }}"></div>
+      <div class="col-md-6"><label class="form-label">IBAN Number</label><input type="text" name="bank_iban" class="form-control" value="{{ inv.bank_iban if inv else s.get('bank_iban','') }}"></div>
+      <div class="col-md-4"><label class="form-label">Account Number</label><input type="text" name="bank_account" class="form-control" value="{{ inv.bank_account if inv else s.get('bank_account','') }}"></div>
+      <div class="col-md-4"><label class="form-label">Swift Code</label><input type="text" name="bank_swift" class="form-control" value="{{ inv.bank_swift if inv else s.get('bank_swift','') }}"></div>
+    </div>
+  </div>
+
+  <!-- Payment -->
+  <div class="sh">7. Payment &amp; Notes</div>
+  <div class="sb2">
+    <div class="row g-2">
+      <div class="col-md-6"><label class="form-label">Payment Terms</label><input type="text" name="payment_terms" class="form-control" value="{{ inv.payment_terms if inv else s.get('default_payment_terms','100% Advance Payment') }}"></div>
+      <div class="col-md-6"><label class="form-label">Mode of Payment</label><input type="text" name="mode_of_payment" class="form-control" value="{{ inv.mode_of_payment if inv else s.get('default_mode_of_payment','Bank Transfer') }}"></div>
+      <div class="col-12"><label class="form-label">Notes</label><textarea name="notes" class="form-control" rows="2">{{ inv.notes if inv else '' }}</textarea></div>
+    </div>
+  </div>
+
+</div><!-- /col-8 -->
+
+<div class="col-lg-4">
+  <!-- Totals -->
+  <div class="sh">Totals</div>
+  <div class="sb2">
+    <div class="tot-box">
+      <div class="tr2"><span>Sub-Total (AED)</span><strong id="dSub">0.00</strong></div>
+      <div class="tr2"><span>VAT Amount (AED)</span><strong id="dVat">0.00</strong></div>
+      <div class="tr2 net"><span>Net Payable (AED)</span><strong id="dNet" style="color:#1a1a1a;">0.00</strong></div>
+    </div>
+    <div style="margin-top:10px;padding:8px 12px;background:#f8f8f8;border-radius:6px;font-size:11.5px;color:#666;font-style:italic;">
+      <i class="bi bi-chat-quote me-1"></i><span id="dWords">—</span>
+    </div>
+    <input type="hidden" name="subtotal" id="hSub">
+    <input type="hidden" name="vat_amount" id="hVat">
+    <input type="hidden" name="net_payable" id="hNet">
+  </div>
+
+  <!-- Signatory -->
+  <div class="sh">Authorised Signatory</div>
+  <div class="sb2">
+    <div class="form-check mb-2">
+      <input class="form-check-input" type="checkbox" name="include_signature" id="inclSig" {{ 'checked' if inv is none or inv.include_signature }} onchange="toggleSig()">
+      <label class="form-check-label" for="inclSig" style="font-size:13px;">Include Signature</label>
+    </div>
+    <div id="sigSec">
+      <label class="form-label">Select Signatory</label>
+      <select name="signatory_id" class="form-select form-select-sm mb-2" onchange="updateSigPrev(this)">
+        <option value="">— None —</option>
+        {% for sg in sigs %}
+        <option value="{{ sg.id }}" data-img="{{ url_for('static',filename=sg.image_path) if sg.image_path else '' }}"
+          {{ 'selected' if (inv and inv.signatory_id==sg.id) or (not inv and def_sig and def_sig.id==sg.id) }}>
+          {{ sg.name }}{% if sg.position %} – {{ sg.position }}{% endif %}{% if sg.is_default %} ★{% endif %}
+        </option>{% endfor %}
+      </select>
+      <div id="sigPrev" style="min-height:50px;border:1px dashed #ddd;border-radius:6px;padding:6px;text-align:center;">
+        {% if inv and inv.include_signature and inv.signatory_image %}
+          <img src="{{ url_for('static',filename=inv.signatory_image) }}" style="max-height:55px;">
+        {% elif def_sig and def_sig.image_path %}
+          <img src="{{ url_for('static',filename=def_sig.image_path) }}" style="max-height:55px;">
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Stamp -->
+  <div class="sh">Company Stamp</div>
+  <div class="sb2">
+    <div class="form-check mb-2">
+      <input class="form-check-input" type="checkbox" name="include_stamp" id="inclStamp" {{ 'checked' if inv is none or inv.include_stamp }} onchange="toggleStamp()">
+      <label class="form-check-label" for="inclStamp" style="font-size:13px;">Include Stamp</label>
+    </div>
+    <div id="stmpSec">
+      <label class="form-label">Select Stamp</label>
+      <select name="stamp_id" class="form-select form-select-sm mb-2" id="stampSel" onchange="updateStmpPrev(this)">
+        <option value="">— None —</option>
+        {% for st in stamps %}
+        <option value="{{ st.id }}" data-img="{{ url_for('static',filename=st.image_path) if st.image_path else '' }}"
+          {{ 'selected' if (inv and inv.stamp_id==st.id) or (not inv and def_stamp and def_stamp.id==st.id) }}>
+          {{ st.name }}{% if st.is_default %} ★{% endif %}
+        </option>{% endfor %}
+      </select>
+      <div id="stmpPrev" style="min-height:60px;border:1px dashed #ddd;border-radius:6px;padding:6px;text-align:center;">
+        {% if inv and inv.include_stamp and inv.stamp_image %}
+          <img src="{{ url_for('static',filename=inv.stamp_image) }}" style="max-height:65px;">
+        {% elif def_stamp and def_stamp.image_path %}
+          <img src="{{ url_for('static',filename=def_stamp.image_path) }}" style="max-height:65px;">
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="d-grid gap-2">
+    <button type="submit" class="btn ba"><i class="bi bi-save me-1"></i>Save &amp; Generate PDF</button>
+    <a href="{{ url_for('invoices') }}" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+</div>
+</div>
+</form>
+{% endblock %}
+{% block xs %}
+<script>
+const DEFVAT='{{ s.get("default_vat_rate","5") }}';
+let rc=document.querySelectorAll('#tbody tr').length;
+
+function addRow(){
+  rc++;
+  var tr=document.createElement('tr');
+  tr.innerHTML='<td><span class="sr" style="font-size:12px;color:#aaa;">'+rc+'</span></td>'+
+    '<td><input type="text" name="description[]" class="form-control form-control-sm" required></td>'+
+    '<td><input type="number" name="quantity[]" class="form-control form-control-sm qty" value="1" min="0" step="0.01" oninput="calcRow(this)"></td>'+
+    '<td><input type="number" name="amount[]" class="form-control form-control-sm amt" value="0" min="0" step="0.01" oninput="calcRow(this)"></td>'+
+    '<td><input type="number" class="form-control form-control-sm tamt bg-light" value="0" readonly tabindex="-1"></td>'+
+    '<td><input type="number" name="tax_rate[]" class="form-control form-control-sm txr" value="'+DEFVAT+'" min="0" max="100" step="0.1" oninput="calcRow(this)"></td>'+
+    '<td><input type="number" class="form-control form-control-sm txamt bg-light" value="0" readonly tabindex="-1"></td>'+
+    '<td><input type="number" class="form-control form-control-sm rtot bg-light" value="0" readonly tabindex="-1"></td>'+
+    '<td><button type="button" class="btn btn-sm btn-outline-danger p-0 px-1" onclick="delRow(this)"><i class="bi bi-x"></i></button></td>';
+  document.getElementById('tbody').appendChild(tr);
+  renum();
+}
+function delRow(btn){var rows=document.querySelectorAll('#tbody tr');if(rows.length<=1){alert('At least one item required.');return;}btn.closest('tr').remove();renum();calcTotals();}
+function renum(){document.querySelectorAll('#tbody tr').forEach(function(tr,i){var s=tr.querySelector('.sr');if(s)s.textContent=i+1;});}
+function calcRow(el){
+  var tr=el.closest('tr');
+  var qty=parseFloat(tr.querySelector('.qty').value)||0;
+  var amt=parseFloat(tr.querySelector('.amt').value)||0;
+  var rate=parseFloat(tr.querySelector('.txr').value)||0;
+  var ta=qty*amt,tx=ta*rate/100,tot=ta+tx;
+  tr.querySelector('.tamt').value=ta.toFixed(2);
+  tr.querySelector('.txamt').value=tx.toFixed(2);
+  tr.querySelector('.rtot').value=tot.toFixed(2);
+  calcTotals();
+}
+function calcTotals(){
+  var sub=0,vat=0;
+  document.querySelectorAll('#tbody tr').forEach(function(tr){
+    sub+=parseFloat(tr.querySelector('.tamt')&&tr.querySelector('.tamt').value)||0;
+    vat+=parseFloat(tr.querySelector('.txamt')&&tr.querySelector('.txamt').value)||0;
+  });
+  var net=sub+vat;
+  document.getElementById('dSub').textContent=sub.toFixed(2);
+  document.getElementById('dVat').textContent=vat.toFixed(2);
+  document.getElementById('dNet').textContent=net.toFixed(2);
+  document.getElementById('hSub').value=sub.toFixed(2);
+  document.getElementById('hVat').value=vat.toFixed(2);
+  document.getElementById('hNet').value=net.toFixed(2);
+  document.getElementById('dWords').textContent=n2w(net);
+}
+function n2w(num){
+  if(!num||num===0) return 'Zero Dirhams Only';
+  var ones=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  var tens=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+  function sp(n){n=Math.floor(n);if(n<20)return ones[n];if(n<100)return tens[Math.floor(n/10)]+(n%10?' '+ones[n%10]:'');if(n<1000)return ones[Math.floor(n/100)]+' Hundred'+(n%100?' and '+sp(n%100):'');if(n<1000000)return sp(Math.floor(n/1000))+' Thousand'+(n%1000?' '+sp(n%1000):'');return sp(Math.floor(n/1000000))+' Million'+(n%1000000?' '+sp(n%1000000):'');}
+  var a=Math.floor(num),f=Math.round((num-a)*100);
+  return sp(a)+(f?' and '+sp(f)+' Fils':'')+' Dirhams Only';
+}
+function toggleSig(){document.getElementById('sigSec').style.display=document.getElementById('inclSig').checked?'':'none';}
+function toggleStamp(){document.getElementById('stmpSec').style.display=document.getElementById('inclStamp').checked?'':'none';}
+function updateSigPrev(sel){var img=sel.options[sel.selectedIndex]&&sel.options[sel.selectedIndex].dataset.img;document.getElementById('sigPrev').innerHTML=img?'<img src="'+img+'" style="max-height:55px;">':'';}
+function updateStmpPrev(sel){var img=sel.options[sel.selectedIndex]&&sel.options[sel.selectedIndex].dataset.img;document.getElementById('stmpPrev').innerHTML=img?'<img src="'+img+'" style="max-height:65px;">':'';}
+
+function setType(type,el){
+  document.getElementById('invType').value=type;
+  document.querySelectorAll('.type-tab').forEach(function(t){t.className=t.className.replace(/active-\w+/,'').trim();});
+  el.className+=' active-'+(type==='TAX'?'tax':'pro');
+  document.getElementById('typeHint').textContent=type==='PROFORMA'?'Proforma invoice — not a VAT tax document':'Official UAE VAT Tax Invoice';
+  refreshInvNum();
+}
+
+function selectCo(id,code,el){
+  document.getElementById('companyId').value=id;
+  document.querySelectorAll('.co-tab').forEach(function(t){t.classList.remove('active');});
+  el.classList.add('active');
+  // Load stamps for this company
+  fetch('/api/stamps/'+id).then(function(r){return r.json();}).then(function(stamps){
+    var sel=document.getElementById('stampSel');
+    sel.innerHTML='<option value="">— None —</option>';
+    stamps.forEach(function(st){
+      var opt=document.createElement('option');
+      opt.value=st.id;opt.dataset.img=st.image_path?'/static/'+st.image_path:'';
+      opt.textContent=st.name+(st.is_default?' ★':'');
+      if(st.is_default)opt.selected=true;
+      sel.appendChild(opt);
+    });
+    updateStmpPrev(sel);
+  });
+  refreshInvNum();
+}
+
+function refreshInvNum(){
+  var coId=document.getElementById('companyId').value;
+  var type=document.getElementById('invType').value;
+  fetch('/api/next-invoice-number?co_id='+coId+'&type='+type).then(function(r){return r.json();}).then(function(d){
+    var numField=document.getElementById('invNum');
+    if(!numField.dataset.manual){
+      numField.value=d.number;
+      document.getElementById('invNumDisplay').textContent=d.number;
+    }
+  });
+}
+
+// Date input helper - enforce DD-MM-YYYY
+document.addEventListener('DOMContentLoaded',function(){
+  var dateField=document.getElementById('invDate');
+  if(dateField && !dateField.value){
+    var now=new Date();
+    var dd=String(now.getDate()).padStart(2,'0');
+    var mm=String(now.getMonth()+1).padStart(2,'0');
+    var yyyy=now.getFullYear();
+    dateField.value=dd+'-'+mm+'-'+yyyy;
+  }
+  if(document.querySelectorAll('#tbody tr').length===0) addRow();
+  calcTotals(); toggleSig(); toggleStamp();
+  var sigSel=document.querySelector('[name="signatory_id"]');
+  var stpSel=document.getElementById('stampSel');
+  if(sigSel)updateSigPrev(sigSel);
+  if(stpSel)updateStmpPrev(stpSel);
+  document.getElementById('invNum').addEventListener('input',function(){this.dataset.manual='1';});
+});
+
+// Client autocomplete
+var clSearch=document.getElementById('clSearch');
+var clDrop=document.getElementById('clDrop');
+var tmr;
+clSearch.addEventListener('input',function(){
+  clearTimeout(tmr);var q=this.value.trim();
+  if(!q){clDrop.style.display='none';return;}
+  tmr=setTimeout(function(){
+    fetch('/api/clients/search?q='+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(data){
+      clDrop.innerHTML='';
+      if(!data.length){clDrop.style.display='none';return;}
+      data.forEach(function(c){
+        var a=document.createElement('a');a.className='list-group-item list-group-item-action py-2';a.style.fontSize='13px';
+        a.innerHTML='<strong>'+c.name+'</strong>'+(c.trn?' <small class="text-muted">TRN: '+c.trn+'</small>':'');
+        a.onclick=function(){fillClient(c);};clDrop.appendChild(a);
+      });clDrop.style.display='block';
+    });
+  },200);
+});
+function fillClient(c){
+  document.getElementById('clId').value=c.id||'';document.getElementById('clName').value=c.name||'';
+  document.getElementById('clTrn').value=c.trn||'';document.getElementById('clAddr').value=c.address||'';
+  document.getElementById('clCountry').value=c.country||'';document.getElementById('clTel').value=c.telephone||'';
+  document.getElementById('clEmail').value=c.email||'';clSearch.value=c.name;clDrop.style.display='none';
+}
+document.addEventListener('click',function(e){if(!clSearch.contains(e.target))clDrop.style.display='none';});
+</script>
+{% endblock %}

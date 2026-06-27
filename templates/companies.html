@@ -1,0 +1,38 @@
+{% extends 'base.html' %}{% block title %}Companies{% endblock %}{% block pt %}Company Management{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div></div>
+  <a href="{{ url_for('new_company') }}" class="btn btn-sm ba"><i class="bi bi-plus-circle me-1"></i>Add Company</a>
+</div>
+<form method="POST" action="{{ url_for('bulk_delete_companies') }}" onsubmit="return confirm('Delete selected companies?')" id="bulkForm">
+<div class="pc">
+  <div class="ph"><i class="bi bi-building me-1"></i>All Companies
+    <button type="submit" class="btn btn-sm btn-outline-danger ms-auto" style="font-size:11px;"><i class="bi bi-trash me-1"></i>Delete Selected</button>
+  </div>
+  <div class="table-responsive">
+    <table class="table gt mb-0">
+      <thead><tr>
+        <th style="width:36px;"><input type="checkbox" id="selAll" onchange="document.querySelectorAll('.coChk').forEach(function(c){c.checked=this.checked;},this)"></th>
+        <th>Code</th><th>Company Name</th><th>TRN</th><th>Address</th><th>Tel</th><th>Status</th><th>Actions</th>
+      </tr></thead>
+      <tbody>
+      {% for co in companies %}<tr>
+        <td><input type="checkbox" name="ids[]" value="{{ co.id }}" class="coChk"></td>
+        <td><span class="co-pill" style="font-size:12px;font-weight:700;">{{ co.code }}</span></td>
+        <td><strong>{{ co.name }}</strong></td>
+        <td style="font-size:12px;">{{ co.trn or '—' }}</td>
+        <td style="font-size:12px;">{{ (co.address or '')[:35] }}{% if co.address and co.address|length > 35 %}…{% endif %}</td>
+        <td style="font-size:12px;">{{ co.telephone or '—' }}</td>
+        <td><span class="{{ 'badge-on' if co.is_active else 'badge-off' }}">{{ 'Active' if co.is_active else 'Inactive' }}</span></td>
+        <td><div class="d-flex gap-1">
+          <a href="{{ url_for('edit_company',cid=co.id) }}" class="btn btn-sm bg"><i class="bi bi-pencil"></i></a>
+          <form method="POST" action="{{ url_for('delete_company',cid=co.id) }}" onsubmit="return confirm('Delete company {{ co.name }}? This cannot be undone.')">
+            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+          </form>
+        </div></td>
+      </tr>{% else %}<tr><td colspan="8" class="text-center text-muted py-4">No companies.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</form>{% endblock %}

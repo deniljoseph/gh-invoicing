@@ -1,0 +1,45 @@
+{% extends 'base.html' %}{% block title %}Reports{% endblock %}{% block pt %}Reports{% endblock %}
+{% block xh %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>{% endblock %}
+{% block content %}
+<div class="pc mb-4"><div class="ph"><i class="bi bi-funnel me-1"></i>Filters</div><div style="padding:14px 18px;">
+  <form method="GET" class="d-flex gap-3 flex-wrap align-items-end">
+    <div><label class="form-label">Company</label><select name="co" class="form-select form-select-sm" style="width:160px;"><option value="">All</option>{% for co in companies %}<option value="{{ co.id }}" {{ 'selected' if co_filter==co.id|string }}>{{ co.code }}</option>{% endfor %}</select></div>
+    <div><label class="form-label">Type</label><select name="type" class="form-select form-select-sm" style="width:140px;"><option value="">All</option><option value="TAX" {{ 'selected' if inv_type=='TAX' }}>Tax Invoice</option><option value="PROFORMA" {{ 'selected' if inv_type=='PROFORMA' }}>Proforma</option></select></div>
+    <div><label class="form-label">Period</label><select name="period" class="form-select form-select-sm">{% for p in ['daily','weekly','monthly','quarterly','yearly'] %}<option value="{{ p }}" {{ 'selected' if period==p }}>{{ p|title }}</option>{% endfor %}</select></div>
+    <div><label class="form-label">Year</label><select name="year" class="form-select form-select-sm">{% for y in range(2024,2031) %}<option value="{{ y }}" {{ 'selected' if year|int==y }}>{{ y }}</option>{% endfor %}</select></div>
+    {% if period=='monthly' %}<div><label class="form-label">Month</label><select name="month" class="form-select form-select-sm">{% for m in range(1,13) %}<option value="{{ '%02d'|format(m) }}" {{ 'selected' if month=='%02d'|format(m) }}>{{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}</option>{% endfor %}</select></div>{% endif %}
+    <button type="submit" class="btn bg btn-sm">Apply</button>
+  </form>
+</div></div>
+<div class="row g-3 mb-4">
+  <div class="col-md-4"><div class="sc text-center"><div style="font-size:26px;font-weight:700;">{{ invoices|length }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-receipt me-1"></i>Invoices</div></div></div>
+  <div class="col-md-4"><div class="sc text-center"><div style="font-size:18px;font-weight:700;">{{ "{:,.2f}".format(total_sales) }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-currency-dollar me-1"></i>Revenue (AED)</div></div></div>
+  <div class="col-md-4"><div class="sc text-center"><div style="font-size:18px;font-weight:700;">{{ "{:,.2f}".format(total_vat) }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-percent me-1"></i>VAT Collected</div></div></div>
+</div>
+<div class="pc mb-4"><div class="ph"><i class="bi bi-bar-chart-line me-1"></i>Monthly Revenue – {{ year }}</div><div style="padding:18px;"><canvas id="chart" height="70"></canvas></div></div>
+<div class="pc"><div class="ph"><i class="bi bi-table me-1"></i>Invoice Details <span class="ms-auto badge bg-secondary" style="font-size:11px;">{{ invoices|length }}</span></div>
+<div class="table-responsive"><table class="table gt mb-0">
+  <thead><tr><th>#</th><th>Invoice No</th><th>Type</th><th>Co.</th><th>Client</th><th>Date</th><th>Sub-Total</th><th>VAT</th><th>Net Payable</th></tr></thead>
+  <tbody>{% for inv in invoices %}<tr>
+    <td style="font-size:12px;color:#aaa;">{{ loop.index }}</td>
+    <td><a href="{{ url_for('view_invoice',iid=inv.id) }}" class="text-primary fw-bold">{{ inv.invoice_number }}</a></td>
+    <td><span class="type-badge-{{ inv.invoice_type }}">{{ inv.invoice_type }}</span></td>
+    <td><span class="co-pill">{{ inv.co_code }}</span></td>
+    <td>{{ inv.client_name or '—' }}</td><td style="font-size:12px;color:#888;">{{ fmt_date(inv.invoice_date) }}</td>
+    <td>{{ "{:,.2f}".format(inv.subtotal) }}</td><td>{{ "{:,.2f}".format(inv.vat_amount) }}</td>
+    <td><strong>{{ "{:,.2f}".format(inv.net_payable) }}</strong></td>
+  </tr>{% else %}<tr><td colspan="9" class="text-center text-muted py-4">No invoices for this period.</td></tr>{% endfor %}</tbody>
+  {% if invoices %}<tfoot><tr style="background:#1a1a1a;color:#fff;font-weight:700;">
+    <td colspan="6" style="padding:10px 13px;">TOTALS</td>
+    <td style="padding:10px 13px;">{{ "{:,.2f}".format(invoices|sum(attribute='subtotal')) }}</td>
+    <td style="padding:10px 13px;">{{ "{:,.2f}".format(total_vat) }}</td>
+    <td style="padding:10px 13px;">{{ "{:,.2f}".format(total_sales) }}</td>
+  </tr></tfoot>{% endif %}
+</table></div></div>
+{% endblock %}
+{% block xs %}<script>
+new Chart(document.getElementById('chart').getContext('2d'),{type:'bar',
+  data:{labels:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+    datasets:[{label:'Revenue (AED)',data:{{ chart_data|safe }},backgroundColor:'rgba(200,169,110,0.75)',borderColor:'rgba(200,169,110,1)',borderWidth:1,borderRadius:4}]},
+  options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:function(v){return 'AED '+v.toLocaleString();}}}}}});
+</script>{% endblock %}

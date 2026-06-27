@@ -1,0 +1,64 @@
+{% extends 'base.html' %}{% block title %}Invoices{% endblock %}{% block pt %}Invoices{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <form class="d-flex gap-2 flex-wrap" method="GET">
+    <select name="co" class="form-select form-select-sm" style="width:160px;" onchange="this.form.submit()">
+      <option value="">All Companies</option>
+      {% for co in companies %}<option value="{{ co.id }}" {{ 'selected' if co_id==co.id|string }}>{{ co.code }}</option>{% endfor %}
+    </select>
+    <select name="type" class="form-select form-select-sm" style="width:140px;" onchange="this.form.submit()">
+      <option value="">All Types</option>
+      <option value="TAX" {{ 'selected' if inv_type=='TAX' }}>Tax Invoice</option>
+      <option value="PROFORMA" {{ 'selected' if inv_type=='PROFORMA' }}>Proforma</option>
+    </select>
+    <input type="text" name="q" class="form-control form-control-sm" placeholder="Search…" value="{{ q }}" style="width:200px;">
+    <button class="btn btn-sm bg">Search</button>
+    {% if q or co_id or inv_type %}<a href="{{ url_for('invoices') }}" class="btn btn-sm btn-outline-secondary">Clear</a>{% endif %}
+  </form>
+  <div class="d-flex gap-2 flex-wrap">
+    {% for co in companies %}
+    <div class="dropdown d-inline">
+      <button class="btn btn-sm ba dropdown-toggle" data-bs-toggle="dropdown" style="font-size:12px;">{{ co.code }}</button>
+      <ul class="dropdown-menu">
+        <li><a class="dropdown-item" href="{{ url_for('new_invoice') }}?co={{ co.id }}&type=TAX"><i class="bi bi-receipt me-2"></i>Tax Invoice</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('new_invoice') }}?co={{ co.id }}&type=PROFORMA"><i class="bi bi-file-earmark me-2"></i>Proforma Invoice</a></li>
+      </ul>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+<div class="pc">
+  <div class="ph"><i class="bi bi-receipt"></i>All Invoices <span class="ms-auto badge bg-secondary" style="font-size:11px;">{{ invoices|length }}</span></div>
+  <div class="table-responsive">
+    <table class="table gt mb-0">
+      <thead><tr><th>#</th><th>Invoice No</th><th>Type</th><th>Co.</th><th>Client</th><th>Date</th><th>Sub-Total</th><th>VAT</th><th>Net Payable</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for inv in invoices %}
+      <tr>
+        <td style="color:#aaa;font-size:12px;">{{ loop.index }}</td>
+        <td><strong class="text-primary">{{ inv.invoice_number }}</strong></td>
+        <td><span class="type-badge-{{ inv.invoice_type }}">{{ 'TAX' if inv.invoice_type=='TAX' else 'PROFORMA' }}</span></td>
+        <td><span class="co-pill">{{ inv.co_code }}</span></td>
+        <td>{{ inv.client_name or '—' }}</td>
+        <td style="font-size:12px;color:#888;">{{ fmt_date(inv.invoice_date) }}</td>
+        <td>{{ "{:,.2f}".format(inv.subtotal) }}</td>
+        <td>{{ "{:,.2f}".format(inv.vat_amount) }}</td>
+        <td><strong>{{ "{:,.2f}".format(inv.net_payable) }}</strong></td>
+        <td>
+          <div class="d-flex gap-1 flex-nowrap">
+            <a href="{{ url_for('view_invoice',iid=inv.id) }}" class="btn btn-sm bg" title="View"><i class="bi bi-eye"></i></a>
+            <a href="{{ url_for('edit_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>
+            <a href="{{ url_for('download_pdf',iid=inv.id) }}" class="btn btn-sm btn-outline-danger" title="PDF"><i class="bi bi-file-pdf"></i></a>
+            <a href="{{ url_for('duplicate_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-warning" title="Duplicate"><i class="bi bi-copy"></i></a>
+            <form method="POST" action="{{ url_for('delete_invoice',iid=inv.id) }}" onsubmit="return confirm('Delete this invoice?')">
+              <button class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% else %}<tr><td colspan="10" class="text-center text-muted py-5"><i class="bi bi-inbox" style="font-size:36px;display:block;margin-bottom:8px;opacity:.3;"></i>No invoices found.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
