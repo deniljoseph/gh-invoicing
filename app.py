@@ -9,7 +9,7 @@ from flask import (Flask, render_template, request, redirect, url_for,
                    session, flash, jsonify, send_file, send_from_directory)
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from db import get_db, last_insert_id, returning_id, USE_PG
+#from db import get_db, last_insert_id, returning_id, USE_PG
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 ARCHIVE_DIR = os.path.join(BASE_DIR, "Invoices Archive")
