@@ -620,10 +620,18 @@ def _save_inv(iid,s):
         conn.execute("DELETE FROM invoice_items WHERE invoice_id=?",(iid,))
         lbl='INVOICE_EDITED'
     else:
-        cols=','.join(data.keys()); ph=','.join('?'*len(data))
-        conn.execute(f"INSERT INTO invoices({cols}) VALUES({ph})",list(data.values()))
-        iid=last_insert_id(conn); lbl='INVOICE_CREATED'
-    descs=request.form.getlist('description[]'); qtys=request.form.getlist('quantity[]')
+        cols=','.join(data.keys())
+        ph=','.join(['%s' if USE_PG else '?']*len(data))
+        sql=f"INSERT INTO invoices({cols}) VALUES({ph})"
+        if USE_PG:
+            sql+=' RETURNING id'
+            _cur=conn.execute(sql,list(data.values()))
+            _row=_cur.fetchone()
+            iid=_row['id'] if _row else None
+        else:
+            conn.execute(sql,list(data.values()))
+            iid=conn.execute('SELECT last_insert_rowid()',()).fetchone()[0]
+        lbl='INVOICE_CREATED'
     amts=request.form.getlist('amount[]'); rates=request.form.getlist('tax_rate[]')
     for i,desc in enumerate(descs):
         if not desc.strip(): continue
@@ -631,7 +639,8 @@ def _save_inv(iid,s):
         amt=float(amts[i] if i<len(amts) else 0)
         rate=float(rates[i] if i<len(rates) else 5)
         ta=qty*amt; tx=ta*rate/100; tot=ta+tx
-        conn.execute("INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)" if USE_PG else "INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(?,?,?,?,?,?,?,?,?)",
+        _ii_sql = "INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)" if USE_PG else "INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(?,?,?,?,?,?,?,?,?)"
+        conn.execute(_ii_sql,
                      (iid,i+1,desc,qty,amt,ta,rate,tx,tot))
     conn.commit()
     pdf=gen_pdf(iid)
@@ -674,7 +683,7 @@ def duplicate_invoice(iid):
         signatory_id,signatory_name,signatory_image,stamp_id,stamp_name,stamp_image,
         include_signature,include_stamp,created_by)
         VALUES({_ph(34)})""" + (" RETURNING id" if USE_PG else "")
-    conn.execute(_dup_sql,
+    _dup_cur=conn.execute(_dup_sql,
         (nn,inv_type,co_id,datetime.now().strftime('%Y-%m-%d'),inv['num_pages'],inv['purchase_order'],
          inv['client_id'],inv['client_name'],inv['client_trn'],inv['client_address'],inv['client_country'],
          inv['client_telephone'],inv['client_email'],inv['bank_name'],inv['bank_iban'],inv['bank_account'],
@@ -682,9 +691,14 @@ def duplicate_invoice(iid):
          inv['amount_in_words'],inv['payment_terms'],inv['mode_of_payment'],inv['notes'],
          inv['signatory_id'],inv['signatory_name'],inv['signatory_image'],inv['stamp_id'],
          inv['stamp_name'],inv['stamp_image'],inv['include_signature'],inv['include_stamp'],session.get('user_id')))
-    nid=last_insert_id(conn)
+    if USE_PG:
+        _dup_row=_dup_cur.fetchone()
+        nid=_dup_row['id'] if _dup_row else None
+    else:
+        nid=conn.execute('SELECT last_insert_rowid()',()).fetchone()[0]
     for item in items:
-        conn.execute("INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)" if USE_PG else "INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(?,?,?,?,?,?,?,?,?)",
+        _ii_sql = "INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)" if USE_PG else "INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(?,?,?,?,?,?,?,?,?)"
+        conn.execute(_ii_sql,
                      (nid,item['sr_no'],item['description'],item['quantity'],item['amount'],item['total_amount'],item['tax_rate'],item['tax_amount'],item['total']))
     conn.commit()
     pdf=gen_pdf(nid)

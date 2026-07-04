@@ -169,11 +169,18 @@ def _pg_to_sqlite(sql):
 def last_insert_id(conn, table=''):
     """Get last inserted ID in a DB-agnostic way."""
     if USE_PG:
+        # Use lastval() - works after any INSERT (no RETURNING needed)
+        try:
+            row = conn._cur.fetchone()
+            if row:
+                d = dict(row) if not isinstance(row, DictRow) else row._d
+                return list(d.values())[0]
+        except Exception:
+            pass
+        # Fallback to lastval()
+        conn._cur.execute("SELECT lastval()")
         row = conn._cur.fetchone()
-        if row:
-            d = dict(row) if not isinstance(row, DictRow) else row._d
-            return list(d.values())[0]
-        return None
+        return list(dict(row).values())[0] if row else None
     else:
         return conn._conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
