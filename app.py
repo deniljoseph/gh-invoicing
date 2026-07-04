@@ -632,6 +632,7 @@ def _save_inv(iid,s):
             conn.execute(sql,list(data.values()))
             iid=conn.execute('SELECT last_insert_rowid()',()).fetchone()[0]
         lbl='INVOICE_CREATED'
+    descs=request.form.getlist('description[]'); qtys=request.form.getlist('quantity[]')
     amts=request.form.getlist('amount[]'); rates=request.form.getlist('tax_rate[]')
     for i,desc in enumerate(descs):
         if not desc.strip(): continue
