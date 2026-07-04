@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% block title %}User{% endblock %}{% block pt %}{{ 'Edit' if mode=='edit' else 'New' }} User{% endblock %}
+{% block content %}<div style="max-width:560px;"><div class="pc"><div class="ph"><i class="bi bi-person-plus me-1"></i>{{ 'Edit User' if mode=='edit' else 'New User' }}</div><div style="padding:22px;">
+  <form method="POST"><div class="row g-3">
+    <div class="col-md-6"><label class="form-label">Username *</label><input type="text" name="username" class="form-control" value="{{ u.username if u else '' }}" {{ 'readonly' if mode=='edit' else 'required' }}></div>
+    <div class="col-md-6"><label class="form-label">Full Name</label><input type="text" name="full_name" class="form-control" value="{{ u.full_name if u else '' }}"></div>
+    <div class="col-md-6"><label class="form-label">Email</label><input type="email" name="email" class="form-control" value="{{ u.email if u else '' }}"></div>
+    <div class="col-md-6"><label class="form-label">Role</label><select name="role" class="form-select"><option value="user" {{ 'selected' if u and u.role=='user' }}>Standard User</option><option value="admin" {{ 'selected' if u and u.role=='admin' }}>Administrator</option></select></div>
+    <div class="col-12"><label class="form-label">{{ 'New Password (blank = no change)' if mode=='edit' else 'Password *' }}</label><input type="password" name="password" class="form-control" {{ '' if mode=='edit' else 'required' }} minlength="6"><small class="text-muted">Min 6 characters</small></div>
+    {% if mode=='edit' %}<div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_active" {{ 'checked' if u.is_active }}><label class="form-check-label">Account Active</label></div></div>{% endif %}
+  </div>
+  <div class="d-flex gap-2 mt-4"><button type="submit" class="btn ba px-4"><i class="bi bi-save me-1"></i>Save</button><a href="{{ url_for('users') }}" class="btn btn-outline-secondary">Cancel</a></div>
+  </form>
+</div></div></div>{% endblock %}

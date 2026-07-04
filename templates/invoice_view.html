@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+{% block title %}{{ inv.invoice_number }}{% endblock %}{% block pt %}{{ inv.invoice_number }}{% endblock %}
+{% block content %}
+<div class="d-flex gap-2 mb-3 flex-wrap">
+  <a href="{{ url_for('invoices') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back</a>
+  <a href="{{ url_for('edit_invoice',iid=inv.id) }}" class="btn btn-sm bg"><i class="bi bi-pencil me-1"></i>Edit</a>
+  <a href="{{ url_for('preview_pdf',iid=inv.id) }}" class="btn btn-sm btn-outline-danger" target="_blank"><i class="bi bi-eye me-1"></i>Preview PDF</a>
+  <a href="{{ url_for('download_pdf',iid=inv.id) }}" class="btn btn-sm ba"><i class="bi bi-download me-1"></i>Download PDF</a>
+  <a href="{{ url_for('duplicate_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-warning"><i class="bi bi-copy me-1"></i>Duplicate</a>
+  <form method="POST" action="{{ url_for('delete_invoice',iid=inv.id) }}" onsubmit="return confirm('Delete?');" class="d-inline">
+    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Delete</button>
+  </form>
+</div>
+<div class="pc" style="max-width:860px;margin:0 auto;">
+  <div style="background:#1a1a1a;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+    <div>
+      {% set logo=s.get('logo_path','') %}
+      {% if logo %}<img src="{{ url_for('static',filename=logo) }}" style="height:46px;filter:brightness(0) invert(1);object-fit:contain;" alt="GH">
+      {% else %}<span style="color:#fff;font-size:22px;font-weight:800;">GH</span>{% endif %}
+    </div>
+    <div style="text-align:center;">
+      <div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:2px;">
+        {% if inv.invoice_type=='PROFORMA' %}PROFORMA INVOICE{% else %}TAX INVOICE{% endif %}
+      </div>
+      <div style="color:#c8a96e;font-size:11px;margin-top:2px;">TRN: {{ co.trn if co else '' }}</div>
+    </div>
+    <div style="color:#ccc;font-size:12px;text-align:right;line-height:2;">
+      <div><strong style="color:#fff;">Invoice No :</strong> {{ inv.invoice_number }}</div>
+      <div><strong style="color:#fff;">Billing Date :</strong> {{ fmt_date(inv.invoice_date) }}</div>
+      <div><strong style="color:#fff;">Pages :</strong> {{ inv.num_pages }}</div>
+      {% if inv.purchase_order %}<div><strong style="color:#fff;">PO :</strong> {{ inv.purchase_order }}</div>{% endif %}
+    </div>
+  </div>
+  <div style="padding:18px 22px;">
+    {% if co %}<div style="background:#f8f9fa;border:1px solid #e0e0e0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;"><strong>{{ co.name }}</strong> &nbsp;|&nbsp; {{ co.address }} &nbsp;|&nbsp; {{ co.telephone }}</div>{% endif %}
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <div style="border:1px solid #e0e0e0;border-radius:8px;height:100%;">
+          <div style="background:#2c2c2c;color:#fff;padding:8px 14px;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;">Customer Details</div>
+          <div style="padding:10px 14px;">
+            <table style="font-size:12.5px;width:100%;border-collapse:collapse;">
+              {% for lbl,val in [('Name',inv.client_name),('TRN',inv.client_trn),('Address',inv.client_address),('Country',inv.client_country),('Tel',inv.client_telephone),('Email',inv.client_email)] %}
+              <tr><td style="color:#888;width:65px;padding:2px 0;">{{ lbl }}</td><td style="padding:2px 0;">: {{ val or '—' }}</td></tr>{% endfor %}
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div style="border:1px solid #e0e0e0;border-radius:8px;height:100%;">
+          <div style="background:#2c2c2c;color:#fff;padding:8px 14px;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;">Our Bank Details</div>
+          <div style="padding:10px 14px;">
+            <table style="font-size:12.5px;width:100%;border-collapse:collapse;">
+              {% for lbl,val in [('Name',co.name if co else ''),('IBAN No',inv.bank_iban),('Account No',inv.bank_account),('Swift Code',inv.bank_swift),('Currency',inv.currency),('Bank Name',inv.bank_name)] %}
+              <tr><td style="color:#888;width:75px;padding:2px 0;">{{ lbl }}</td><td style="padding:2px 0;">: {{ val or '—' }}</td></tr>{% endfor %}
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="table-responsive mb-3">
+      <table class="table gt mb-0" style="font-size:12.5px;">
+        <thead><tr><th>Sr.</th><th>Description</th><th>Qty</th><th>Amount</th><th>Total Amt</th><th>Tax %</th><th>Tax Amt</th><th>Total</th></tr></thead>
+        <tbody>
+        {% for it in items %}<tr>
+          <td>{{ it.sr_no }}</td><td>{{ it.description }}</td>
+          <td>{{ "{:,.2f}".format(it.quantity) }}</td><td>{{ "{:,.2f}".format(it.amount) }}</td>
+          <td>{{ "{:,.2f}".format(it.total_amount) }}</td><td>{{ it.tax_rate }}%</td>
+          <td>{{ "{:,.2f}".format(it.tax_amount) }}</td><td><strong>{{ "{:,.2f}".format(it.total) }}</strong></td>
+        </tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-end mb-3 gap-3 flex-wrap">
+      <div style="flex:1;min-width:200px;border:1px solid #e0e0e0;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#555;"><strong>Amount in Words:</strong><br><em>{{ inv.amount_in_words or '—' }}</em></div>
+      <div style="min-width:280px;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;">
+        <div style="display:flex;justify-content:space-between;padding:7px 14px;border-bottom:1px solid #eee;font-size:13px;"><span>Sub-Total (AED)</span><strong>{{ "{:,.2f}".format(inv.subtotal) }}</strong></div>
+        <div style="display:flex;justify-content:space-between;padding:7px 14px;border-bottom:1px solid #eee;font-size:13px;"><span>VAT Amount (AED)</span><strong>{{ "{:,.2f}".format(inv.vat_amount) }}</strong></div>
+        <div style="display:flex;justify-content:space-between;padding:10px 14px;background:#1a1a1a;"><span style="color:#c8a96e;font-weight:700;font-size:13.5px;">Net Payable (AED)</span><strong style="color:#fff;font-size:13.5px;">{{ "{:,.2f}".format(inv.net_payable) }}</strong></div>
+      </div>
+    </div>
+    <div style="border:1px solid #e0e0e0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;">
+      <strong>Payment Terms &amp; Instructions</strong><br>
+      Payment Terms : {{ inv.payment_terms }}&nbsp;&nbsp;&nbsp;Mode of Payment : {{ inv.mode_of_payment }}
+      {% if inv.notes %}<br>Notes : {{ inv.notes }}{% endif %}
+    </div>
+    <div style="border:1px solid #e0e0e0;border-radius:8px;display:flex;overflow:hidden;margin-bottom:14px;">
+      <div style="flex:1;padding:14px 16px;border-right:1px solid #e0e0e0;">
+        <div style="font-size:12px;color:#888;margin-bottom:8px;">For {{ co.name if co else '' }}</div>
+        {% if inv.include_signature and inv.signatory_image %}
+          <img src="{{ url_for('static',filename=inv.signatory_image) }}" style="height:55px;display:block;margin-bottom:6px;">
+        {% else %}<div style="height:40px;"></div>{% endif %}
+        <div style="font-size:12px;font-weight:700;">Authorised Signatory</div>
+        <div style="font-size:12px;color:#666;">{{ inv.signatory_name or '' }}</div>
+      </div>
+      <div style="min-width:160px;padding:14px 16px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+        {% if inv.include_stamp and inv.stamp_image %}
+          <img src="{{ url_for('static',filename=inv.stamp_image) }}" style="height:75px;margin-bottom:6px;">
+          <div style="font-size:12px;font-weight:700;color:#555;">Company Stamp</div>
+        {% else %}<div style="color:#ccc;font-size:12px;">No stamp</div>{% endif %}
+      </div>
+    </div>
+    {% set footer=s.get('footer_path','') %}
+    {% if footer %}<img src="{{ url_for('static',filename=footer) }}" style="width:100%;border-radius:6px;">{% endif %}
+  </div>
+</div>
+{% endblock %}

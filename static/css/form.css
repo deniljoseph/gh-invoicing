@@ -1,0 +1,16 @@
+.sh{background:#1a1a1a;color:#fff;padding:10px 16px;font-size:13px;font-weight:600;border-radius:8px 8px 0 0;}
+.sb2{border:1px solid #e0e0e0;border-top:none;border-radius:0 0 8px 8px;padding:16px;background:#fff;margin-bottom:14px;}
+[data-bs-theme=dark] .sb2{background:#1e1e1e;border-color:#333;}
+.tot-box{background:#f8f8f8;border:1px solid #e5e5e5;border-radius:8px;padding:14px;}
+[data-bs-theme=dark] .tot-box{background:#252525;border-color:#333;}
+.tr2{display:flex;justify-content:space-between;padding:5px 0;font-size:13.5px;border-bottom:1px solid #eee;}
+.tr2.net{font-size:16px;font-weight:700;padding-top:8px;border-bottom:none;}
+#items-tbl th{background:#2c2c2c;color:#fff;font-size:11px;padding:8px;border:none;}
+#items-tbl td{padding:4px 5px;vertical-align:middle;}
+#items-tbl input{font-size:12.5px;border-radius:5px;}
+.co-tab{padding:10px 16px;border:2px solid #e0e0e0;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;transition:all .15s;background:#fff;text-align:center;min-width:90px;}
+.co-tab.active{border-color:#c8a96e;background:rgba(200,169,110,0.1);color:#9a7030;}
+[data-bs-theme=dark] .co-tab{background:#222;border-color:#444;color:#bbb;}
+.type-tab{padding:8px 20px;border:2px solid #e0e0e0;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;transition:all .15s;background:#fff;}
+.type-tab.active-tax{border-color:#1a1a1a;background:#1a1a1a;color:#fff;}
+.type-tab.active-pro{border-color:#c8a96e;background:#c8a96e;color:#fff;}
