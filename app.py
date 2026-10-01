@@ -885,8 +885,8 @@ def gen_pdf(iid):
     curr  = inv["currency"]     or "AED"
     bname = inv["bank_name"]    or s.get("bank_name","")
     def row(ll,lv,rl,rv): return [P(ll,7.5),P(lv,7.5),P(rl,7.5),P(rv,7.5)]
-    # Truncate long company name so it fits in bank details value column
-    co_name_short = co_name if len(co_name) <= 38 else co_name[:36]+"..."
+    # Full company name (Paragraph cells wrap automatically if it is ever too long)
+    co_name_short = co_name
     info = [
         [P("Customer Details",8,True),P(""),P("Our Bank Details",8,True),P("")],
         row("Name",   ": "+(inv["client_name"]      or ""),"Name",      ": "+co_name_short),
