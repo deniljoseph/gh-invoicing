@@ -7,10 +7,36 @@
   <a href="{{ url_for('preview_pdf',iid=inv.id) }}" class="btn btn-sm btn-outline-danger" target="_blank"><i class="bi bi-eye me-1"></i>Preview PDF</a>
   <a href="{{ url_for('download_pdf',iid=inv.id) }}" class="btn btn-sm ba"><i class="bi bi-download me-1"></i>Download PDF</a>
   <a href="{{ url_for('duplicate_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-warning"><i class="bi bi-copy me-1"></i>Duplicate</a>
+  {% if inv.invoice_type=='PROFORMA' %}
+    {% if linked_tax %}
+    <a href="{{ url_for('view_invoice',iid=linked_tax.id) }}" class="btn btn-sm btn-success"><i class="bi bi-receipt me-1"></i>View Tax Invoice {{ linked_tax.invoice_number }}</a>
+    <form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion?\nTax Invoice {{ linked_tax.invoice_number }} will be permanently removed. This Proforma stays.');" class="d-inline">
+      <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-counterclockwise me-1"></i>Undo conversion</button>
+    </form>
+    {% else %}
+    <form method="POST" action="{{ url_for('convert_to_tax',iid=inv.id) }}" onsubmit="return confirm('Create a Tax Invoice from {{ inv.invoice_number }}?\nThe Proforma will be kept, and you can undo this afterwards.');" class="d-inline">
+      <button class="btn btn-sm btn-success"><i class="bi bi-arrow-repeat me-1"></i>Convert to Tax Invoice</button>
+    </form>
+    {% endif %}
+  {% elif inv.converted_from_id %}
+  <form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion?\nThis Tax Invoice ({{ inv.invoice_number }}) will be permanently removed. The Proforma {{ inv.converted_from_number }} stays.');" class="d-inline">
+    <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-counterclockwise me-1"></i>Undo conversion</button>
+  </form>
+  {% endif %}
   <form method="POST" action="{{ url_for('delete_invoice',iid=inv.id) }}" onsubmit="return confirm('Delete?');" class="d-inline">
     <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Delete</button>
   </form>
 </div>
+{% if inv.converted_from_id %}
+<div class="alert alert-info py-2 mb-3" style="max-width:860px;margin:0 auto 12px;font-size:13px;">
+  <i class="bi bi-info-circle me-1"></i>Created from Proforma Invoice
+  {% if linked_pro and linked_pro.status=='active' %}<a href="{{ url_for('view_invoice',iid=linked_pro.id) }}"><strong>{{ inv.converted_from_number }}</strong></a>{% else %}<strong>{{ inv.converted_from_number }}</strong>{% endif %}{% if inv.converted_at %} on {{ inv.converted_at[:10] }}{% endif %}.
+</div>
+{% elif linked_tax %}
+<div class="alert alert-success py-2 mb-3" style="max-width:860px;margin:0 auto 12px;font-size:13px;">
+  <i class="bi bi-check-circle me-1"></i>Converted to Tax Invoice <a href="{{ url_for('view_invoice',iid=linked_tax.id) }}"><strong>{{ linked_tax.invoice_number }}</strong></a>{% if inv.converted_at %} on {{ inv.converted_at[:10] }}{% endif %}. This Proforma is kept.
+</div>
+{% endif %}
 <div class="pc" style="max-width:860px;margin:0 auto;">
   <div style="background:#1a1a1a;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
     <div>

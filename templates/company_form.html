@@ -75,6 +75,26 @@
           <small class="text-muted">→ GHM-PINV-2026-0001</small>
         </div>
 
+        <div class="col-12" id="bank">
+          <div class="fw-bold mt-2" style="font-size:13px;"><i class="bi bi-bank me-1"></i>Bank Account <small class="text-muted fw-normal">(shown on this company's invoices; if left empty, the Shared Bank Details from Settings are used)</small></div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Bank Name</label>
+          <input type="text" name="bank_name" class="form-control" value="{{ co.bank_name if co and co.bank_name else '' }}" placeholder="e.g. WIO BUSINESS">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">IBAN Number</label>
+          <input type="text" name="bank_iban" class="form-control" value="{{ co.bank_iban if co and co.bank_iban else '' }}" placeholder="AE...">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Account Number</label>
+          <input type="text" name="bank_account" class="form-control" value="{{ co.bank_account if co and co.bank_account else '' }}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Swift Code</label>
+          <input type="text" name="bank_swift" class="form-control" value="{{ co.bank_swift if co and co.bank_swift else '' }}">
+        </div>
+
         <div class="col-md-6">
           <label class="form-label">Company Logo <small class="text-muted fw-normal">(used in PDF header)</small></label>
           {% if co and co.logo_path %}

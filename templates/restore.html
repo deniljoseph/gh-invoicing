@@ -1,0 +1,21 @@
+{% extends 'base.html' %}{% block title %}Backup &amp; Restore{% endblock %}{% block pt %}Backup &amp; Restore{% endblock %}
+{% block content %}
+<div class="row g-4" style="max-width:900px;">
+  <div class="col-lg-6"><div class="pc"><div class="ph"><i class="bi bi-cloud-arrow-down-fill me-1"></i>Download Backup</div>
+    <div style="padding:18px;">
+      <p style="font-size:13px;">One Excel file with everything: companies (incl. bank accounts), clients, invoices &amp; items, signatories, stamps, users, settings, audit log and your uploaded logos/stamps/signatures.</p>
+      <a href="{{ url_for('backup') }}" class="btn ba"><i class="bi bi-download me-1"></i>Download Backup (.xlsx)</a>
+      <p class="text-muted mt-3 mb-0" style="font-size:12px;">Keep this file safe: it contains user password hashes and business data. Invoice PDFs are rebuilt automatically from the data after a restore.</p>
+    </div></div></div>
+  <div class="col-lg-6"><div class="pc"><div class="ph"><i class="bi bi-cloud-arrow-up-fill me-1"></i>Restore Backup</div>
+    <div style="padding:18px;">
+      <form method="POST" enctype="multipart/form-data" onsubmit="return confirm('This REPLACES all current data with the backup. Continue?');">
+        <input type="file" name="backup_file" class="form-control mb-3" accept=".xlsx" required>
+        <div class="form-check mb-3"><input class="form-check-input" type="checkbox" id="ok" required>
+          <label class="form-check-label" for="ok" style="font-size:12.5px;">I understand this will replace all current data with the contents of the backup file.</label></div>
+        <button class="btn btn-outline-danger"><i class="bi bi-arrow-counterclockwise me-1"></i>Restore</button>
+      </form>
+      <p class="text-muted mt-3 mb-0" style="font-size:12px;">Download a fresh backup first if you may need the current data. After restoring you will be asked to log in again.</p>
+    </div></div></div>
+</div>
+{% endblock %}

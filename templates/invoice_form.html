@@ -138,10 +138,10 @@
   <div class="sh">6. Bank Details</div>
   <div class="sb2">
     <div class="row g-2">
-      <div class="col-md-6"><label class="form-label">Bank Name</label><input type="text" name="bank_name" class="form-control" value="{{ inv.bank_name if inv else s.get('bank_name','') }}"></div>
-      <div class="col-md-6"><label class="form-label">IBAN Number</label><input type="text" name="bank_iban" class="form-control" value="{{ inv.bank_iban if inv else s.get('bank_iban','') }}"></div>
-      <div class="col-md-4"><label class="form-label">Account Number</label><input type="text" name="bank_account" class="form-control" value="{{ inv.bank_account if inv else s.get('bank_account','') }}"></div>
-      <div class="col-md-4"><label class="form-label">Swift Code</label><input type="text" name="bank_swift" class="form-control" value="{{ inv.bank_swift if inv else s.get('bank_swift','') }}"></div>
+      <div class="col-md-6"><label class="form-label">Bank Name</label><input type="text" name="bank_name" class="form-control" value="{{ inv.bank_name if inv else bank.get('bank_name','') }}"></div>
+      <div class="col-md-6"><label class="form-label">IBAN Number</label><input type="text" name="bank_iban" class="form-control" value="{{ inv.bank_iban if inv else bank.get('bank_iban','') }}"></div>
+      <div class="col-md-4"><label class="form-label">Account Number</label><input type="text" name="bank_account" class="form-control" value="{{ inv.bank_account if inv else bank.get('bank_account','') }}"></div>
+      <div class="col-md-4"><label class="form-label">Swift Code</label><input type="text" name="bank_swift" class="form-control" value="{{ inv.bank_swift if inv else bank.get('bank_swift','') }}"></div>
     </div>
   </div>
 
@@ -305,8 +305,18 @@ function setType(type,el){
   refreshInvNum();
 }
 
+var CO_BANKS={{ co_banks|tojson }};
+var FORM_MODE='{{ mode }}';
+var ORIG_CO='{{ selected_co_id }}', ORIG_TYPE='{{ inv_type or 'TAX' }}', ORIG_NUM='{{ inv.invoice_number if inv else inv_num }}';
+function fillBank(id){
+  var b=CO_BANKS[id]; if(!b) return;
+  ['bank_name','bank_iban','bank_account','bank_swift'].forEach(function(k){
+    var el=document.querySelector('[name='+k+']'); if(el) el.value=b[k]||'';
+  });
+}
 function selectCo(id,code,el){
   document.getElementById('companyId').value=id;
+  if(FORM_MODE==='new') fillBank(id);
   document.querySelectorAll('.co-tab').forEach(function(t){t.classList.remove('active');});
   el.classList.add('active');
   // Load stamps for this company
@@ -330,6 +340,11 @@ function refreshInvNum(){
   var type=document.getElementById('invType').value;
   fetch('/api/next-invoice-number?co_id='+coId+'&type='+type).then(function(r){return r.json();}).then(function(d){
     var numField=document.getElementById('invNum');
+    if(FORM_MODE==='edit' && coId==ORIG_CO && type==ORIG_TYPE){
+      numField.value=ORIG_NUM; numField.dataset.manual='';
+      document.getElementById('invNumDisplay').textContent=ORIG_NUM;
+      return;
+    }
     if(!numField.dataset.manual){
       numField.value=d.number;
       document.getElementById('invNumDisplay').textContent=d.number;

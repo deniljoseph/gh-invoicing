@@ -36,7 +36,7 @@
       {% for inv in invoices %}
       <tr>
         <td style="color:#aaa;font-size:12px;">{{ loop.index }}</td>
-        <td><strong class="text-primary">{{ inv.invoice_number }}</strong></td>
+        <td><strong class="text-primary">{{ inv.invoice_number }}</strong>{% if inv.tax_id %}<div style="font-size:11px;color:#198754;">→ {{ inv.converted_to_number }}</div>{% elif inv.converted_from_number %}<div style="font-size:11px;color:#888;">from {{ inv.converted_from_number }}</div>{% endif %}</td>
         <td><span class="type-badge-{{ inv.invoice_type }}">{{ 'TAX' if inv.invoice_type=='TAX' else 'PROFORMA' }}</span></td>
         <td><span class="co-pill">{{ inv.co_code }}</span></td>
         <td>{{ inv.client_name or '—' }}</td>
@@ -50,6 +50,20 @@
             <a href="{{ url_for('edit_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>
             <a href="{{ url_for('download_pdf',iid=inv.id) }}" class="btn btn-sm btn-outline-danger" title="PDF"><i class="bi bi-file-pdf"></i></a>
             <a href="{{ url_for('duplicate_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-warning" title="Duplicate"><i class="bi bi-copy"></i></a>
+            {% if inv.invoice_type=='PROFORMA' and inv.tax_id %}
+            <a href="{{ url_for('view_invoice',iid=inv.tax_id) }}" class="btn btn-sm btn-outline-success" title="View Tax Invoice {{ inv.converted_to_number }}"><i class="bi bi-receipt"></i></a>
+            <form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion? Tax Invoice {{ inv.converted_to_number }} will be removed; the Proforma stays.')">
+              <button class="btn btn-sm btn-outline-secondary" title="Undo conversion"><i class="bi bi-arrow-counterclockwise"></i></button>
+            </form>
+            {% elif inv.invoice_type=='PROFORMA' %}
+            <form method="POST" action="{{ url_for('convert_to_tax',iid=inv.id) }}" onsubmit="return confirm('Create a Tax Invoice from {{ inv.invoice_number }}? The Proforma is kept.')">
+              <button class="btn btn-sm btn-outline-success" title="Convert to Tax Invoice"><i class="bi bi-arrow-repeat"></i></button>
+            </form>
+            {% elif inv.converted_from_id %}
+            <form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion? This Tax Invoice will be removed; Proforma {{ inv.converted_from_number }} stays.')">
+              <button class="btn btn-sm btn-outline-secondary" title="Undo conversion"><i class="bi bi-arrow-counterclockwise"></i></button>
+            </form>
+            {% endif %}
             <form method="POST" action="{{ url_for('delete_invoice',iid=inv.id) }}" onsubmit="return confirm('Delete this invoice?')">
               <button class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
             </form>

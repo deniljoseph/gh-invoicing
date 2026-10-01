@@ -2,7 +2,7 @@
 Geometry Home Invoice Management System v8
 Multi-company | PostgreSQL (Railway) + SQLite (local) | UAE VAT
 """
-import os, json, secrets, zipfile
+import os, io, re, json, base64, secrets, zipfile
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import (Flask, render_template, request, redirect, url_for,
@@ -18,7 +18,7 @@ IMAGES_DIR  = os.path.join(BASE_DIR, "static", "images")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
 
 for d in [ARCHIVE_DIR, IMAGES_DIR,
           os.path.join(UPLOAD_DIR,"logos"),
@@ -205,6 +205,23 @@ def init_db():
                 pass
         conn.commit()
 
+    # Migrations: proforma <-> tax invoice links, and per-company bank account
+    _migs = [("invoices","converted_from_id","INTEGER"),("invoices","converted_from_number","TEXT"),
+             ("invoices","converted_to_id","INTEGER"),("invoices","converted_to_number","TEXT"),
+             ("invoices","converted_at","TEXT"),
+             ("companies","bank_name","TEXT"),("companies","bank_iban","TEXT"),
+             ("companies","bank_account","TEXT"),("companies","bank_swift","TEXT")]
+    for _t,_col,_typ in _migs:
+        try:
+            if USE_PG:
+                conn.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS {_col} {_typ}", ())
+            else:
+                conn.execute(f"ALTER TABLE {_t} ADD COLUMN {_col} {_typ}", ())
+            conn.commit()
+        except Exception:
+            try: conn._conn.rollback()
+            except Exception: pass
+
     # Seed default settings
     defaults = {
         'bank_name':'WIO BUSINESS',
@@ -353,6 +370,15 @@ def get_company(cid):
         row = conn.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
+BANK_KEYS = ('bank_name','bank_iban','bank_account','bank_swift')
+
+def bank_for_company(co, s):
+    """Company's own bank account if it has one, otherwise the shared bank details from Settings."""
+    c = dict(co) if co else {}
+    if (c.get('bank_iban') or '').strip() or (c.get('bank_account') or '').strip():
+        return {k: (c.get(k) or '') for k in BANK_KEYS}
+    return {k: (s.get(k,'') or '') for k in BANK_KEYS}
 
 def audit(action, details=''):
     if 'user_id' in session:
@@ -505,7 +531,7 @@ def dashboard():
 def invoices():
     q=request.args.get('q',''); co_id=request.args.get('co',''); inv_type=request.args.get('type','')
     conn=get_db()
-    base="SELECT i.*,c.name as co_name,c.code as co_code FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.status='active'"
+    base="SELECT i.*,c.name as co_name,c.code as co_code,(SELECT t.id FROM invoices t WHERE t.id=i.converted_to_id AND t.status='active') AS tax_id FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.status='active'"
     params=[]
     if q: base+=" AND (i.invoice_number LIKE ? OR i.client_name LIKE ?)"; params+=[f'%{q}%',f'%{q}%']
     if co_id: base+=" AND i.company_id=?"; params.append(co_id)
@@ -537,7 +563,8 @@ def new_invoice():
     return render_template('invoice_form.html', mode='new', inv=None, items=[],
         clients=clients, sigs=sigs, stamps=stamps, def_sig=def_sig, def_stamp=def_stamp,
         inv_num=next_inv_num(co_id,inv_type), s=s, companies=companies,
-        selected_co_id=co_id, co=co, inv_type=inv_type)
+        selected_co_id=co_id, co=co, inv_type=inv_type,
+        bank=bank_for_company(co,s), co_banks={c['id']:bank_for_company(c,s) for c in companies})
 
 @app.route('/invoices/<int:iid>/edit', methods=['GET','POST'])
 @login_req
@@ -557,10 +584,25 @@ def edit_invoice(iid):
     return render_template('invoice_form.html', mode='edit', inv=inv, items=items,
         clients=clients, sigs=sigs, stamps=stamps, def_sig=None, def_stamp=None,
         inv_num=inv['invoice_number'], s=s, companies=companies,
-        selected_co_id=co_id, co=co, inv_type=inv['invoice_type'])
+        selected_co_id=co_id, co=co, inv_type=inv['invoice_type'],
+        bank=bank_for_company(co,s), co_banks={c['id']:bank_for_company(c,s) for c in companies})
 
 def _save_inv(iid,s):
-    f=request.form; conn=get_db()
+    held=[]
+    try:
+        return _save_inv_impl(iid,s,held)
+    except Exception as e:
+        for _c in held:
+            try: _c._conn.rollback()
+            except Exception: pass
+            try: _c.close()
+            except Exception: pass
+        app.logger.exception('Saving invoice failed')
+        flash(f'Could not save the invoice: {e}','danger')
+        return redirect(url_for('edit_invoice',iid=iid) if iid else url_for('new_invoice'))
+
+def _save_inv_impl(iid,s,held):
+    f=request.form; conn=get_db(); held.append(conn)
     co_id=int(f.get('company_id',1) or 1)
     inv_type=f.get('invoice_type','TAX')
     sid=f.get('signatory_id') or None; sn=''; si=''
@@ -612,6 +654,11 @@ def _save_inv(iid,s):
         'include_stamp':1 if f.get('include_stamp') else 0,
         'created_by':session.get('user_id'),
     }
+    dup=conn.execute("SELECT id FROM invoices WHERE invoice_number=? AND id<>?",(data['invoice_number'],iid or 0)).fetchone()
+    if dup:
+        conn.close()
+        flash(f"Invoice number {data['invoice_number']} already exists. Please use a different number.",'danger')
+        return redirect(url_for('edit_invoice',iid=iid) if iid else url_for('new_invoice',co=co_id,type=inv_type))
     if iid:
         _p='%s' if USE_PG else '?'
         sets=', '.join(f"{k}={_p}" for k in data if k!='created_by')
@@ -636,15 +683,21 @@ def _save_inv(iid,s):
     amts=request.form.getlist('amount[]'); rates=request.form.getlist('tax_rate[]')
     for i,desc in enumerate(descs):
         if not desc.strip(): continue
-        qty=float(qtys[i] if i<len(qtys) else 1)
-        amt=float(amts[i] if i<len(amts) else 0)
-        rate=float(rates[i] if i<len(rates) else 5)
+        def _n(lst,default):
+            try: return float(lst[i]) if i<len(lst) and str(lst[i]).strip()!='' else default
+            except ValueError: return default
+        qty=_n(qtys,1); amt=_n(amts,0); rate=_n(rates,5)
         ta=qty*amt; tx=ta*rate/100; tot=ta+tx
         _ii_sql = "INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)" if USE_PG else "INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(?,?,?,?,?,?,?,?,?)"
         conn.execute(_ii_sql,
                      (iid,i+1,desc,qty,amt,ta,rate,tx,tot))
     conn.commit()
-    pdf=gen_pdf(iid)
+    pdf=None
+    try:
+        pdf=gen_pdf(iid)
+    except Exception as e:
+        app.logger.exception('PDF generation failed for invoice %s', iid)
+        flash(f'Invoice saved, but the PDF could not be regenerated: {e}','warning')
     if pdf: conn.execute("UPDATE invoices SET pdf_path=? WHERE id=?",(pdf,iid)); conn.commit()
     conn.close(); audit(lbl,data['invoice_number'])
     flash('Invoice saved successfully!','success')
@@ -657,9 +710,13 @@ def view_invoice(iid):
     inv=conn.execute("SELECT i.*,c.name as co_name,c.code as co_code FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.id=?",(iid,)).fetchone()
     items=conn.execute("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY sr_no",(iid,)).fetchall()
     co=conn.execute("SELECT * FROM companies WHERE id=?",(inv['company_id'],)).fetchone() if inv else None
+    linked_tax=_linked_tax(conn,inv) if inv else None
+    linked_pro=None
+    if inv and inv['converted_from_id']:
+        linked_pro=conn.execute("SELECT id,invoice_number,status FROM invoices WHERE id=?",(inv['converted_from_id'],)).fetchone()
     conn.close()
     if not inv: flash('Not found.','danger'); return redirect(url_for('invoices'))
-    return render_template('invoice_view.html', inv=inv, items=items, s=gall(), co=co)
+    return render_template('invoice_view.html', inv=inv, items=items, s=gall(), co=co, linked_tax=linked_tax, linked_pro=linked_pro)
 
 @app.route('/invoices/<int:iid>/delete', methods=['POST'])
 @login_req
@@ -668,6 +725,82 @@ def delete_invoice(iid):
     conn.execute("UPDATE invoices SET status='deleted' WHERE id=?",(iid,)); conn.commit(); conn.close()
     if inv: audit('INVOICE_DELETED',inv['invoice_number'])
     flash('Invoice deleted.','success'); return redirect(url_for('invoices'))
+
+def _linked_tax(conn, inv):
+    """Active Tax invoice previously created from this proforma (or None)."""
+    if not inv['converted_to_id']: return None
+    return conn.execute("SELECT * FROM invoices WHERE id=? AND status='active'",(inv['converted_to_id'],)).fetchone()
+
+@app.route('/invoices/<int:iid>/convert-to-tax', methods=['POST'])
+@login_req
+def convert_to_tax(iid):
+    """Create a NEW Tax Invoice from a Proforma. The proforma is kept untouched."""
+    conn=get_db(); inv=conn.execute("SELECT * FROM invoices WHERE id=?",(iid,)).fetchone()
+    if not inv or inv['status']!='active':
+        conn.close(); flash('Invoice not found.','danger'); return redirect(url_for('invoices'))
+    if (inv['invoice_type'] or 'TAX')!='PROFORMA':
+        conn.close(); flash('Only a Proforma Invoice can be converted.','warning'); return redirect(url_for('view_invoice',iid=iid))
+    existing=_linked_tax(conn,inv)
+    if existing:
+        conn.close(); flash(f"Already converted to Tax Invoice {existing['invoice_number']}.",'warning')
+        return redirect(url_for('view_invoice',iid=existing['id']))
+    items=conn.execute("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY sr_no",(iid,)).fetchall()
+    conn.close()
+    new_no=next_inv_num(inv['company_id'] or 1,'TAX')
+    now=datetime.now()
+    skip={'id','pdf_path','created_at','updated_at'}
+    row={k:inv[k] for k in inv.keys() if k not in skip}
+    row.update({'invoice_number':new_no,'invoice_type':'TAX','invoice_date':now.strftime('%Y-%m-%d'),
+                'status':'active','converted_from_id':iid,'converted_from_number':inv['invoice_number'],
+                'converted_to_id':None,'converted_to_number':None,'converted_at':now.strftime('%Y-%m-%d %H:%M:%S'),
+                'created_by':session.get('user_id')})
+    conn=get_db()
+    cols=','.join(row.keys()); ph=','.join(['?']*len(row))
+    sql=f"INSERT INTO invoices({cols}) VALUES({ph})"+(" RETURNING id" if USE_PG else "")
+    cur=conn.execute(sql,list(row.values()))
+    if USE_PG:
+        r=cur.fetchone(); nid=r['id'] if r else None
+    else:
+        nid=conn.execute('SELECT last_insert_rowid()',()).fetchone()[0]
+    for it in items:
+        conn.execute("INSERT INTO invoice_items(invoice_id,sr_no,description,quantity,amount,total_amount,tax_rate,tax_amount,total) VALUES(?,?,?,?,?,?,?,?,?)",
+            (nid,it['sr_no'],it['description'],it['quantity'],it['amount'],it['total_amount'],it['tax_rate'],it['tax_amount'],it['total']))
+    conn.execute("UPDATE invoices SET converted_to_id=?,converted_to_number=?,converted_at=? WHERE id=?",
+                 (nid,new_no,now.strftime('%Y-%m-%d %H:%M:%S'),iid))
+    conn.commit()
+    pdf=gen_pdf(nid)
+    if pdf: conn.execute("UPDATE invoices SET pdf_path=? WHERE id=?",(pdf,nid)); conn.commit()
+    conn.close(); audit('PROFORMA_CONVERTED_TO_TAX',f'{inv["invoice_number"]} -> {new_no}')
+    flash(f'Tax Invoice {new_no} created. Proforma {inv["invoice_number"]} has been kept.','success')
+    return redirect(url_for('view_invoice',iid=nid))
+
+@app.route('/invoices/<int:iid>/undo-convert', methods=['POST'])
+@login_req
+def undo_convert(iid):
+    """Undo a conversion: remove the Tax Invoice that was generated; the Proforma stays as it was."""
+    conn=get_db(); inv=conn.execute("SELECT * FROM invoices WHERE id=?",(iid,)).fetchone()
+    if not inv:
+        conn.close(); flash('Invoice not found.','danger'); return redirect(url_for('invoices'))
+    if (inv['invoice_type'] or 'TAX')=='PROFORMA':
+        pro_id=iid; tax_id=inv['converted_to_id']
+    else:
+        pro_id=inv['converted_from_id']; tax_id=iid
+    tax=conn.execute("SELECT * FROM invoices WHERE id=?",(tax_id,)).fetchone() if tax_id else None
+    if tax and not tax['converted_from_id']:
+        conn.close(); flash('This Tax Invoice was not created from a Proforma.','warning'); return redirect(url_for('view_invoice',iid=iid))
+    if tax:
+        conn.execute("DELETE FROM invoice_items WHERE invoice_id=?",(tax['id'],))
+        conn.execute("DELETE FROM invoices WHERE id=?",(tax['id'],))
+    pro=conn.execute("SELECT * FROM invoices WHERE id=?",(pro_id,)).fetchone() if pro_id else None
+    if pro:
+        conn.execute("UPDATE invoices SET converted_to_id=NULL,converted_to_number=NULL,converted_at=NULL WHERE id=?",(pro_id,))
+    conn.commit(); conn.close()
+    if tax and tax['pdf_path'] and os.path.exists(tax['pdf_path']):
+        try: os.remove(tax['pdf_path'])
+        except Exception: pass
+    audit('TAX_CONVERSION_UNDONE',f'{tax["invoice_number"] if tax else "?"} removed; proforma {pro["invoice_number"] if pro else "?"} kept')
+    flash(f'Conversion undone. Tax Invoice {tax["invoice_number"] if tax else ""} removed.','success')
+    return redirect(url_for('view_invoice',iid=pro_id) if pro else url_for('invoices'))
 
 @app.route('/invoices/<int:iid>/duplicate')
 @login_req
@@ -879,11 +1012,12 @@ def gen_pdf(iid):
 
     # ── CUSTOMER + BANK ─────────────────────────────────────────────────
     half=CW/2; cL=22*mm; cV=half-cL; bL=22*mm; bV=half-bL
-    iban  = inv["bank_iban"]    or s.get("bank_iban","")
-    acct  = str(inv["bank_account"] or s.get("bank_account",""))
-    swift = inv["bank_swift"]   or s.get("bank_swift","")
+    bk    = bank_for_company(co, s)
+    iban  = inv["bank_iban"]    or bk.get("bank_iban","")
+    acct  = str(inv["bank_account"] or bk.get("bank_account",""))
+    swift = inv["bank_swift"]   or bk.get("bank_swift","")
     curr  = inv["currency"]     or "AED"
-    bname = inv["bank_name"]    or s.get("bank_name","")
+    bname = inv["bank_name"]    or bk.get("bank_name","")
     def row(ll,lv,rl,rv): return [P(ll,7.5),P(lv,7.5),P(rl,7.5),P(rv,7.5)]
     # Full company name (Paragraph cells wrap automatically if it is ever too long)
     co_name_short = co_name
@@ -1021,11 +1155,19 @@ def gen_pdf(iid):
     ]))
 
     # ── BUILD ───────────────────────────────────────────────────────────
-    doc=BaseDocTemplate(pdf_path, pagesize=A4,
+    tmp_path = pdf_path + ".tmp"
+    doc=BaseDocTemplate(tmp_path, pagesize=A4,
         leftMargin=SM, rightMargin=SM,
         topMargin=TM, bottomMargin=content_bottom)
     doc.addPageTemplates([PageTemplate(id="main", frames=[frame], onPage=on_page)])
     doc.build(elems)
+    try:
+        os.replace(tmp_path, pdf_path)
+    except OSError:
+        # Old PDF is locked (e.g. still open in a viewer on Windows): keep it and save the new one under a new name
+        alt = pdf_path[:-4] + "_" + datetime.now().strftime("%H%M%S") + ".pdf"
+        os.replace(tmp_path, alt)
+        return alt
     return pdf_path
 
 
@@ -1051,15 +1193,16 @@ def new_company():
                     if field=='logo': logo_path=f'uploads/{subdir}/{fn}'
                     else: stamp_path=f'uploads/{subdir}/{fn}'
         code=f.get('code','').upper().strip()
-        _coph = ','.join(['%s']*17) if USE_PG else ','.join(['?']*17)
-        _co_sql = f"INSERT INTO companies(code,name,address,address2,address3,address4,telephone,email,trn,website,logo_path,stamp_path,letterhead_path,invoice_prefix,proforma_prefix,is_active,sort_order) VALUES({_coph})"
+        _coph = ','.join(['%s']*21) if USE_PG else ','.join(['?']*21)
+        _co_sql = f"INSERT INTO companies(code,name,address,address2,address3,address4,telephone,email,trn,website,logo_path,stamp_path,letterhead_path,invoice_prefix,proforma_prefix,is_active,sort_order,bank_name,bank_iban,bank_account,bank_swift) VALUES({_coph})"
         conn.execute(_co_sql,
             (code,f.get('name'),f.get('address'),f.get('address2',''),
              f.get('address3',''),f.get('address4',''),
              f.get('telephone'),f.get('email'),
              f.get('trn'),f.get('website'),logo_path,stamp_path,lh_path,
              f.get('invoice_prefix',f'{code}-INV'),f.get('proforma_prefix',f'{code}-PINV'),
-             int(f.get('sort_order',99))))
+             1,int(f.get('sort_order',99)),
+             f.get('bank_name','').strip(),f.get('bank_iban','').strip(),f.get('bank_account','').strip(),f.get('bank_swift','').strip()))
         conn.commit(); conn.close(); audit('COMPANY_ADDED',code); flash('Company added.','success')
         return redirect(url_for('companies'))
     return render_template('company_form.html', co=None, mode='new', s=gall())
@@ -1080,14 +1223,15 @@ def edit_company(cid):
                     if field=='logo': logo_path=f'uploads/{subdir}/{fn}'
                     else: stamp_path=f'uploads/{subdir}/{fn}'
         _p2='%s' if USE_PG else '?'
-        _cu_sql=f"UPDATE companies SET name={_p2},address={_p2},address2={_p2},address3={_p2},address4={_p2},telephone={_p2},email={_p2},trn={_p2},website={_p2},logo_path={_p2},stamp_path={_p2},invoice_prefix={_p2},proforma_prefix={_p2},is_active={_p2},sort_order={_p2} WHERE id={_p2}"
+        _cu_sql=f"UPDATE companies SET name={_p2},address={_p2},address2={_p2},address3={_p2},address4={_p2},telephone={_p2},email={_p2},trn={_p2},website={_p2},logo_path={_p2},stamp_path={_p2},invoice_prefix={_p2},proforma_prefix={_p2},is_active={_p2},sort_order={_p2},bank_name={_p2},bank_iban={_p2},bank_account={_p2},bank_swift={_p2} WHERE id={_p2}"
         conn.execute(_cu_sql,
             (f.get('name'),f.get('address'),f.get('address2',''),
              f.get('address3',''),f.get('address4',''),
              f.get('telephone'),f.get('email'),
              f.get('trn'),f.get('website'),logo_path,stamp_path,
              f.get('invoice_prefix'),f.get('proforma_prefix'),
-             1 if f.get('is_active') else 0,int(f.get('sort_order',99)),cid))
+             1 if f.get('is_active') else 0,int(f.get('sort_order',99)),
+             f.get('bank_name','').strip(),f.get('bank_iban','').strip(),f.get('bank_account','').strip(),f.get('bank_swift','').strip(),cid))
         conn.commit(); conn.close(); audit('COMPANY_EDITED',f.get('name')); flash('Company updated.','success')
         return redirect(url_for('companies'))
     conn.close()
@@ -1377,17 +1521,125 @@ def audit_log():
     conn=get_db(); logs=conn.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 500").fetchall(); conn.close()
     return render_template('audit_log.html', logs=logs, s=gall())
 
+BACKUP_TABLES = ['users','settings','companies','clients','signatories','stamps','invoices','invoice_items','audit_logs']
+
+def _table_cols(conn, t):
+    """[(column, type)] for a table, on SQLite and PostgreSQL."""
+    if USE_PG:
+        rows = conn.execute("SELECT column_name AS name, data_type AS type FROM information_schema.columns "
+                            "WHERE table_schema=current_schema() AND table_name=? ORDER BY ordinal_position", (t,)).fetchall()
+        return [(r['name'], (r['type'] or '').lower()) for r in rows]
+    return [(r['name'], (r['type'] or '').lower()) for r in conn.execute(f"PRAGMA table_info({t})").fetchall()]
+
+_ILLEGAL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+
 @app.route('/backup')
 @admin_req
 def backup():
-    ts=datetime.now().strftime('%Y%m%d_%H%M%S'); bd=os.path.join(BASE_DIR,'backups'); os.makedirs(bd,exist_ok=True)
-    bp=os.path.join(bd,f'backup_{ts}.zip')
-    with zipfile.ZipFile(bp,'w',zipfile.ZIP_DEFLATED) as zf:
-        zf.write(DB_PATH,'geometry_home.db')
-        for root,dirs,files in os.walk(UPLOAD_DIR):
-            for fn in files: fp=os.path.join(root,fn); zf.write(fp,os.path.relpath(fp,BASE_DIR))
-    audit('BACKUP_CREATED',f'backup_{ts}.zip')
-    return send_file(bp,as_attachment=True,download_name=f'backup_{ts}.zip')
+    """One-click full backup: every table + uploaded logos/stamps/signatures in a single Excel file."""
+    from openpyxl import Workbook
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    wb = Workbook(); meta = wb.active; meta.title = '_meta'
+    conn = get_db(); counts = {}
+    for t in BACKUP_TABLES:
+        cols = [c for c,_ in _table_cols(conn, t)]
+        rows = conn.execute(f"SELECT * FROM {t}").fetchall()
+        ws = wb.create_sheet(t); ws.append(cols)
+        for r in rows:
+            ws.append([None]*len(cols))
+            for ci, c in enumerate(cols, 1):
+                v = r[c]
+                if isinstance(v, str): v = _ILLEGAL.sub('', v)
+                cell = ws.cell(row=ws.max_row, column=ci, value=v)
+                if isinstance(v, str): cell.data_type = 's'   # never treat text such as "=abc" as a formula
+        counts[t] = len(rows)
+    conn.close()
+    fs = wb.create_sheet('_files'); fs.append(['path','chunk','data'])
+    nfiles = 0
+    for root, dirs, files in os.walk(UPLOAD_DIR):
+        for fn in sorted(files):
+            fp = os.path.join(root, fn); rel = os.path.relpath(fp, BASE_DIR).replace(os.sep, '/')
+            with open(fp, 'rb') as fh: b64 = base64.b64encode(fh.read()).decode()
+            for i in range(0, max(len(b64),1), 30000):
+                fs.append([rel, i//30000, b64[i:i+30000]])
+            nfiles += 1
+    meta.append(['key','value'])
+    for k, v in [('app','GH Invoicing Backup'),('format_version',1),('created',datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                 ('database','PostgreSQL' if USE_PG else 'SQLite'),('files',nfiles)] + [(f'rows:{t}',n) for t,n in counts.items()]:
+        meta.append([k, v])
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    audit('BACKUP_CREATED', f'GH_Backup_{ts}.xlsx')
+    return send_file(buf, as_attachment=True, download_name=f'GH_Backup_{ts}.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@app.route('/restore', methods=['GET','POST'])
+@admin_req
+def restore_backup():
+    if request.method == 'GET':
+        return render_template('restore.html', s=gall())
+    from openpyxl import load_workbook
+    fi = request.files.get('backup_file')
+    if not fi or not fi.filename.lower().endswith('.xlsx'):
+        flash('Please choose a GH backup .xlsx file.', 'danger'); return redirect(url_for('restore_backup'))
+    try:
+        wb = load_workbook(fi, data_only=True)
+        if '_meta' not in wb.sheetnames or any(t not in wb.sheetnames for t in BACKUP_TABLES):
+            raise ValueError('This is not a valid GH Invoicing backup file.')
+        mk = {r[0]: r[1] for r in wb['_meta'].iter_rows(min_row=2, values_only=True) if r and r[0]}
+        if mk.get('app') != 'GH Invoicing Backup': raise ValueError('This is not a valid GH Invoicing backup file.')
+    except Exception as e:
+        flash(f'Cannot read backup: {e}', 'danger'); return redirect(url_for('restore_backup'))
+
+    conn = get_db(); restored = {}
+    try:
+        info = {t: _table_cols(conn, t) for t in BACKUP_TABLES}
+        for t in reversed(BACKUP_TABLES): conn.execute(f"DELETE FROM {t}")
+        for t in BACKUP_TABLES:
+            rows = wb[t].iter_rows(values_only=True)
+            header = next(rows, None) or ()
+            types = dict(info[t])
+            use = [(i, h) for i, h in enumerate(header) if h in types]
+            n = 0
+            for r in rows:
+                if all(v is None for v in r): continue
+                vals = []
+                for i, h in use:
+                    v = r[i] if i < len(r) else None
+                    ty = types[h]
+                    if v is not None:
+                        if 'int' in ty and isinstance(v, float) and v.is_integer(): v = int(v)
+                        elif ('char' in ty or 'text' in ty) and not isinstance(v, str):
+                            v = str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+                        elif ty in ('real','double precision','numeric') and isinstance(v, int): v = float(v)
+                    vals.append(v)
+                conn.execute(f"INSERT INTO {t}({','.join(h for _,h in use)}) VALUES({','.join(['?']*len(use))})", vals)
+                n += 1
+            restored[t] = n
+            if USE_PG and 'id' in types:
+                conn.execute(f"SELECT setval(pg_get_serial_sequence('{t}','id'), COALESCE((SELECT MAX(id) FROM {t}),0)+1, false)")
+        conn.commit()
+    except Exception as e:
+        try: conn._conn.rollback()
+        except Exception: pass
+        conn.close(); app.logger.exception('restore failed')
+        flash(f'Restore failed, nothing was changed: {e}', 'danger'); return redirect(url_for('restore_backup'))
+    conn.close()
+
+    # restore uploaded images (logos, stamps, signatures)
+    chunks = {}
+    for r in wb['_files'].iter_rows(min_row=2, values_only=True):
+        if r and r[0]: chunks.setdefault(r[0], []).append((int(r[1] or 0), r[2] or ''))
+    nf = 0; up_root = os.path.abspath(UPLOAD_DIR)
+    for rel, parts in chunks.items():
+        dest = os.path.abspath(os.path.join(BASE_DIR, rel))
+        if not dest.startswith(up_root + os.sep): continue
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, 'wb') as fh: fh.write(base64.b64decode(''.join(d for _, d in sorted(parts))))
+        nf += 1
+    audit('BACKUP_RESTORED', f"{fi.filename}: " + ', '.join(f'{t}={n}' for t, n in restored.items()))
+    session.clear()
+    flash(f"Backup restored ({restored.get('invoices',0)} invoices, {restored.get('companies',0)} companies, {nf} image files). Please log in again.", 'success')
+    return redirect(url_for('login'))
 
 @app.route('/archive')
 @login_req
