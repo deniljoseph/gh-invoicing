@@ -328,6 +328,18 @@ def init_db():
                 conn.execute("INSERT INTO stamps(name,company_id,image_path,is_active,is_default) VALUES(?,?,?,1,?)",
                             (sname, co_id, spath, isdef))
 
+    # One-time: legacy shared bank details (formerly in Settings) now live on the company.
+    # Applied only to GHM (the account those details belong to) and only if GHM has no bank account yet.
+    try:
+        ghm = conn.execute("SELECT id,bank_iban,bank_account FROM companies WHERE code='GHM'").fetchone()
+        if ghm and not (ghm['bank_iban'] or '').strip() and not (ghm['bank_account'] or '').strip():
+            legacy = {r['key']: r['value'] for r in conn.execute("SELECT key,value FROM settings WHERE key IN ('bank_name','bank_iban','bank_account','bank_swift')").fetchall()}
+            if (legacy.get('bank_iban') or legacy.get('bank_account')):
+                _p = '%s' if USE_PG else '?'
+                conn.execute(f"UPDATE companies SET bank_name={_p},bank_iban={_p},bank_account={_p},bank_swift={_p} WHERE id={_p}",
+                             (legacy.get('bank_name',''),legacy.get('bank_iban',''),legacy.get('bank_account',''),legacy.get('bank_swift',''),ghm['id']))
+    except Exception:
+        app.logger.exception('legacy bank migration skipped')
     conn.commit()
     conn.close()
 
@@ -373,12 +385,10 @@ def get_company(cid):
 
 BANK_KEYS = ('bank_name','bank_iban','bank_account','bank_swift')
 
-def bank_for_company(co, s):
-    """Company's own bank account if it has one, otherwise the shared bank details from Settings."""
+def bank_for_company(co, s=None):
+    """Bank details come only from the company's own record (Companies section)."""
     c = dict(co) if co else {}
-    if (c.get('bank_iban') or '').strip() or (c.get('bank_account') or '').strip():
-        return {k: (c.get(k) or '') for k in BANK_KEYS}
-    return {k: (s.get(k,'') or '') for k in BANK_KEYS}
+    return {k: (c.get(k) or '') for k in BANK_KEYS}
 
 def audit(action, details=''):
     if 'user_id' in session:
@@ -671,10 +681,10 @@ def _save_inv_impl(iid,s,held):
         'client_country':f.get('client_country',''),
         'client_telephone':f.get('client_telephone',''),
         'client_email':f.get('client_email',''),
-        'bank_name':f.get('bank_name',s.get('bank_name','')),
-        'bank_iban':f.get('bank_iban',s.get('bank_iban','')),
-        'bank_account':f.get('bank_account',s.get('bank_account','')),
-        'bank_swift':f.get('bank_swift',s.get('bank_swift','')),
+        'bank_name':f.get('bank_name',''),
+        'bank_iban':f.get('bank_iban',''),
+        'bank_account':f.get('bank_account',''),
+        'bank_swift':f.get('bank_swift',''),
         'currency':f.get('currency','AED'),
         'subtotal':sub,'vat_amount':vat,'net_payable':net,
         'amount_in_words':n2w(net),
@@ -1492,7 +1502,7 @@ def delete_user(uid):
 def company_settings():
     if request.method=='POST':
         f=request.form; conn=get_db()
-        for k in ['bank_name','bank_iban','bank_account','bank_swift','currency',
+        for k in ['currency',
                   'default_payment_terms','default_mode_of_payment','default_vat_rate','default_company_id']:
             if k in f:
                 if USE_PG:
