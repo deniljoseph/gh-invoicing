@@ -512,7 +512,7 @@ def dashboard():
     mo=datetime.now().strftime('%Y-%m')
     monthly=float(conn.execute("SELECT COALESCE(SUM(net_payable),0) s FROM invoices WHERE invoice_date LIKE ? AND status='active'",(f'{mo}%',)).fetchone()['s'])
     total_vat=float(conn.execute("SELECT COALESCE(SUM(vat_amount),0) s FROM invoices WHERE status='active'").fetchone()['s'])
-    recent=conn.execute("SELECT i.*,c.name as co_name FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.status='active' ORDER BY i.id DESC LIMIT 10").fetchall()
+    recent=conn.execute("SELECT i.*,c.name as co_name,c.code as co_code FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.status='active' ORDER BY i.id DESC LIMIT 10").fetchall()
     logs=conn.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 8").fetchall()
     companies=conn.execute("SELECT * FROM companies WHERE is_active=1 ORDER BY sort_order").fetchall()
     co_stats={}
