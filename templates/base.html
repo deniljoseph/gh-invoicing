@@ -24,14 +24,19 @@
     <div class="sb-sub">Invoice Management System</div>
   </div>
   <div class="nl">Main</div>
+  {% if session.get('role') == 'admin' %}
   <a href="{{ url_for('dashboard') }}" class="sl {% if request.endpoint=='dashboard' %}on{% endif %}"><i class="bi bi-speedometer2"></i>Dashboard</a>
+  {% endif %}
   <a href="{{ url_for('invoices') }}" class="sl {% if 'invoice' in (request.endpoint or '') %}on{% endif %}"><i class="bi bi-receipt"></i>Invoices</a>
   <a href="{{ url_for('invoices') }}?type=TAX" class="sl" style="padding-left:36px;font-size:12.5px;"><i class="bi bi-dot"></i>Tax Invoices</a>
   <a href="{{ url_for('invoices') }}?type=PROFORMA" class="sl" style="padding-left:36px;font-size:12.5px;"><i class="bi bi-dot"></i>Proforma Invoices</a>
+  {% if can('inv_create') %}<a href="{{ url_for('new_invoice') }}" class="sl {% if request.endpoint=='new_invoice' %}on{% endif %}"><i class="bi bi-plus-circle"></i>New Invoice</a>{% endif %}
+  {% if session.get('role') == 'admin' %}
   <a href="{{ url_for('clients') }}" class="sl {% if 'client' in (request.endpoint or '') %}on{% endif %}"><i class="bi bi-people"></i>Clients</a>
   <a href="{{ url_for('archive') }}" class="sl {% if request.endpoint=='archive' %}on{% endif %}"><i class="bi bi-folder2-open"></i>Invoice Archive</a>
   <div class="nl">Analytics</div>
   <a href="{{ url_for('reports') }}" class="sl {% if request.endpoint=='reports' %}on{% endif %}"><i class="bi bi-bar-chart-line"></i>Reports</a>
+  {% endif %}
   {% if session.get('role') == 'admin' %}
   <div class="nl">Admin</div>
   <a href="{{ url_for('companies') }}" class="sl {% if 'compan' in (request.endpoint or '') %}on{% endif %}"><i class="bi bi-building"></i>Companies</a>
@@ -61,7 +66,7 @@
         </div>
         <div>
           <div style="font-size:13px;font-weight:600;line-height:1.2;">{{ session.get('full_name','User') }}</div>
-          <span class="badge" style="background:#c8a96e;font-size:9px;padding:2px 6px;">{{ session.get('role','user')|title }}</span>
+          <span class="badge" style="background:#c8a96e;font-size:9px;padding:2px 6px;">{{ 'Admin' if session.get('role')=='admin' else 'Sales' }}</span>
         </div>
       </div>
     </div>

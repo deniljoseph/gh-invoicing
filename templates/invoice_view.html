@@ -3,29 +3,29 @@
 {% block content %}
 <div class="d-flex gap-2 mb-3 flex-wrap">
   <a href="{{ url_for('invoices') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back</a>
-  <a href="{{ url_for('edit_invoice',iid=inv.id) }}" class="btn btn-sm bg"><i class="bi bi-pencil me-1"></i>Edit</a>
+  {% if can('inv_edit') %}<a href="{{ url_for('edit_invoice',iid=inv.id) }}" class="btn btn-sm bg"><i class="bi bi-pencil me-1"></i>Edit</a>{% endif %}
   <a href="{{ url_for('preview_pdf',iid=inv.id) }}" class="btn btn-sm btn-outline-danger" target="_blank"><i class="bi bi-eye me-1"></i>Preview PDF</a>
   <a href="{{ url_for('download_pdf',iid=inv.id) }}" class="btn btn-sm ba"><i class="bi bi-download me-1"></i>Download PDF</a>
-  <a href="{{ url_for('duplicate_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-warning"><i class="bi bi-copy me-1"></i>Duplicate</a>
+  {% if can('inv_create') %}<a href="{{ url_for('duplicate_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-warning"><i class="bi bi-copy me-1"></i>Duplicate</a>{% endif %}
   {% if inv.invoice_type=='PROFORMA' %}
     {% if linked_tax %}
     <a href="{{ url_for('view_invoice',iid=linked_tax.id) }}" class="btn btn-sm btn-success"><i class="bi bi-receipt me-1"></i>View Tax Invoice {{ linked_tax.invoice_number }}</a>
-    <form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion?\nTax Invoice {{ linked_tax.invoice_number }} will be permanently removed. This Proforma stays.');" class="d-inline">
+    {% if can('inv_delete') %}<form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion?\nTax Invoice {{ linked_tax.invoice_number }} will be permanently removed. This Proforma stays.');" class="d-inline">
       <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-counterclockwise me-1"></i>Undo conversion</button>
-    </form>
+    </form>{% endif %}
     {% else %}
-    <form method="POST" action="{{ url_for('convert_to_tax',iid=inv.id) }}" onsubmit="return confirm('Create a Tax Invoice from {{ inv.invoice_number }}?\nThe Proforma will be kept, and you can undo this afterwards.');" class="d-inline">
+    {% if can('inv_create') %}<form method="POST" action="{{ url_for('convert_to_tax',iid=inv.id) }}" onsubmit="return confirm('Create a Tax Invoice from {{ inv.invoice_number }}?\nThe Proforma will be kept, and you can undo this afterwards.');" class="d-inline">
       <button class="btn btn-sm btn-success"><i class="bi bi-arrow-repeat me-1"></i>Convert to Tax Invoice</button>
-    </form>
+    </form>{% endif %}
     {% endif %}
   {% elif inv.converted_from_id %}
-  <form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion?\nThis Tax Invoice ({{ inv.invoice_number }}) will be permanently removed. The Proforma {{ inv.converted_from_number }} stays.');" class="d-inline">
+  {% if can('inv_delete') %}<form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion?\nThis Tax Invoice ({{ inv.invoice_number }}) will be permanently removed. The Proforma {{ inv.converted_from_number }} stays.');" class="d-inline">
     <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-counterclockwise me-1"></i>Undo conversion</button>
-  </form>
+  </form>{% endif %}
   {% endif %}
-  <form method="POST" action="{{ url_for('delete_invoice',iid=inv.id) }}" onsubmit="return confirm('Delete?');" class="d-inline">
+  {% if can('inv_delete') %}<form method="POST" action="{{ url_for('delete_invoice',iid=inv.id) }}" onsubmit="return confirm('Delete?');" class="d-inline">
     <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Delete</button>
-  </form>
+  </form>{% endif %}
 </div>
 {% if inv.converted_from_id %}
 <div class="alert alert-info py-2 mb-3" style="max-width:860px;margin:0 auto 12px;font-size:13px;">

@@ -7,7 +7,7 @@
   <tbody>{% for u in users %}<tr>
     <td style="color:#aaa;font-size:12px;">{{ loop.index }}</td><td><strong>{{ u.username }}</strong></td>
     <td>{{ u.full_name or '—' }}</td><td style="font-size:12px;">{{ u.email or '—' }}</td>
-    <td><span class="badge" style="background:{{ '#c8a96e' if u.role=='admin' else '#6c757d' }};font-size:10px;">{{ u.role|title }}</span></td>
+    <td><span class="badge" style="background:{{ '#c8a96e' if u.role=='admin' else '#6c757d' }};font-size:10px;">{{ 'Admin' if u.role=='admin' else 'Sales' }}</span>{% if u.role!='admin' %}<div style="font-size:10.5px;color:#888;margin-top:3px;">{% set up=user_perms(u.role,u.permissions) %}{% for k in perm_defs %}{% if k in up %}{{ {'inv_create':'Create','inv_edit':'Edit','inv_delete':'Delete','inv_view_all':'See all'}[k] }}{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}</div>{% endif %}</td>
     <td><span class="{{ 'badge-on' if u.is_active else 'badge-off' }}">{{ 'Active' if u.is_active else 'Inactive' }}</span></td>
     <td style="font-size:11px;color:#888;">{{ u.last_login|dubai }}</td>
     <td><div class="d-flex gap-1"><a href="{{ url_for('edit_user',uid=u.id) }}" class="btn btn-sm bg"><i class="bi bi-pencil"></i></a>

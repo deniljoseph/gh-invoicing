@@ -16,7 +16,7 @@
     {% if q or co_id or inv_type %}<a href="{{ url_for('invoices') }}" class="btn btn-sm btn-outline-secondary">Clear</a>{% endif %}
   </form>
   <div class="d-flex gap-2 flex-wrap">
-    {% for co in companies %}
+    {% if can('inv_create') %}{% for co in companies %}
     <div class="dropdown d-inline">
       <button class="btn btn-sm ba dropdown-toggle" data-bs-toggle="dropdown" style="font-size:12px;">{{ co.code }}</button>
       <ul class="dropdown-menu">
@@ -24,7 +24,7 @@
         <li><a class="dropdown-item" href="{{ url_for('new_invoice') }}?co={{ co.id }}&type=PROFORMA"><i class="bi bi-file-earmark me-2"></i>Proforma Invoice</a></li>
       </ul>
     </div>
-    {% endfor %}
+    {% endfor %}{% endif %}
   </div>
 </div>
 <div class="pc">
@@ -47,26 +47,26 @@
         <td>
           <div class="d-flex gap-1 flex-nowrap">
             <a href="{{ url_for('view_invoice',iid=inv.id) }}" class="btn btn-sm bg" title="View"><i class="bi bi-eye"></i></a>
-            <a href="{{ url_for('edit_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>
+            {% if can('inv_edit') %}<a href="{{ url_for('edit_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>{% endif %}
             <a href="{{ url_for('download_pdf',iid=inv.id) }}" class="btn btn-sm btn-outline-danger" title="PDF"><i class="bi bi-file-pdf"></i></a>
-            <a href="{{ url_for('duplicate_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-warning" title="Duplicate"><i class="bi bi-copy"></i></a>
+            {% if can('inv_create') %}<a href="{{ url_for('duplicate_invoice',iid=inv.id) }}" class="btn btn-sm btn-outline-warning" title="Duplicate"><i class="bi bi-copy"></i></a>{% endif %}
             {% if inv.invoice_type=='PROFORMA' and inv.tax_id %}
             <a href="{{ url_for('view_invoice',iid=inv.tax_id) }}" class="btn btn-sm btn-outline-success" title="View Tax Invoice {{ inv.converted_to_number }}"><i class="bi bi-receipt"></i></a>
-            <form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion? Tax Invoice {{ inv.converted_to_number }} will be removed; the Proforma stays.')">
+            {% if can('inv_delete') %}<form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion? Tax Invoice {{ inv.converted_to_number }} will be removed; the Proforma stays.')">
               <button class="btn btn-sm btn-outline-secondary" title="Undo conversion"><i class="bi bi-arrow-counterclockwise"></i></button>
-            </form>
+            </form>{% endif %}
             {% elif inv.invoice_type=='PROFORMA' %}
-            <form method="POST" action="{{ url_for('convert_to_tax',iid=inv.id) }}" onsubmit="return confirm('Create a Tax Invoice from {{ inv.invoice_number }}? The Proforma is kept.')">
+            {% if can('inv_create') %}<form method="POST" action="{{ url_for('convert_to_tax',iid=inv.id) }}" onsubmit="return confirm('Create a Tax Invoice from {{ inv.invoice_number }}? The Proforma is kept.')">
               <button class="btn btn-sm btn-outline-success" title="Convert to Tax Invoice"><i class="bi bi-arrow-repeat"></i></button>
-            </form>
+            </form>{% endif %}
             {% elif inv.converted_from_id %}
-            <form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion? This Tax Invoice will be removed; Proforma {{ inv.converted_from_number }} stays.')">
+            {% if can('inv_delete') %}<form method="POST" action="{{ url_for('undo_convert',iid=inv.id) }}" onsubmit="return confirm('Undo conversion? This Tax Invoice will be removed; Proforma {{ inv.converted_from_number }} stays.')">
               <button class="btn btn-sm btn-outline-secondary" title="Undo conversion"><i class="bi bi-arrow-counterclockwise"></i></button>
-            </form>
+            </form>{% endif %}
             {% endif %}
-            <form method="POST" action="{{ url_for('delete_invoice',iid=inv.id) }}" onsubmit="return confirm('Delete this invoice?')">
+            {% if can('inv_delete') %}<form method="POST" action="{{ url_for('delete_invoice',iid=inv.id) }}" onsubmit="return confirm('Delete this invoice?')">
               <button class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
-            </form>
+            </form>{% endif %}
           </div>
         </td>
       </tr>

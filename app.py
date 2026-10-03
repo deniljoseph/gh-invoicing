@@ -5,7 +5,7 @@ Multi-company | PostgreSQL (Railway) + SQLite (local) | UAE VAT
 import os, io, re, json, base64, secrets, zipfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from flask import (Flask, render_template, request, redirect, url_for,
+from flask import (Flask, g, render_template, request, redirect, url_for,
                    session, flash, jsonify, send_file, send_from_directory)
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -210,7 +210,8 @@ def init_db():
              ("invoices","converted_to_id","INTEGER"),("invoices","converted_to_number","TEXT"),
              ("invoices","converted_at","TEXT"),
              ("companies","bank_name","TEXT"),("companies","bank_iban","TEXT"),
-             ("companies","bank_account","TEXT"),("companies","bank_swift","TEXT")]
+             ("companies","bank_account","TEXT"),("companies","bank_swift","TEXT"),
+             ("users","permissions","TEXT")]
     for _t,_col,_typ in _migs:
         try:
             if USE_PG:
@@ -483,6 +484,71 @@ def dubai_time(value, fmt='%Y-%m-%d %H:%M'):
 
 app.jinja_env.filters['dubai'] = dubai_time
 
+# ── PERMISSIONS ────────────────────────────────────────────────────────────
+# Admin: everything.  Sales User (role 'user'): invoices only, with per-user switches below.
+INVOICE_PERMS = {
+    'inv_create':   'Create invoices (new, duplicate, convert Proforma to Tax)',
+    'inv_edit':     'Edit invoices',
+    'inv_delete':   'Delete invoices (and undo conversions)',
+    'inv_view_all': "See and manage other users' invoices (otherwise only their own)",
+}
+DEFAULT_PERMS = ['inv_create', 'inv_edit', 'inv_delete']
+SALES_ENDPOINTS = {
+    'index', 'login', 'logout', 'change_password', 'static',
+    'invoices', 'new_invoice', 'edit_invoice', 'view_invoice', 'delete_invoice',
+    'convert_to_tax', 'undo_convert', 'duplicate_invoice', 'download_pdf', 'preview_pdf',
+    'api_clients', 'api_stamps', 'api_company', 'api_next_inv_num',
+}
+ENDPOINT_PERM = {
+    'new_invoice': 'inv_create', 'duplicate_invoice': 'inv_create', 'convert_to_tax': 'inv_create',
+    'edit_invoice': 'inv_edit',
+    'delete_invoice': 'inv_delete', 'undo_convert': 'inv_delete',
+}
+
+def user_perms(role, raw):
+    if role == 'admin': return set(INVOICE_PERMS)
+    if raw is None: return set(DEFAULT_PERMS)
+    return {p for p in str(raw).split(',') if p in INVOICE_PERMS}
+
+@app.before_request
+def enforce_permissions():
+    """Secure by default: anything not on the sales allow-list is admin-only."""
+    ep = request.endpoint
+    if ep in (None, 'static', 'login') or 'user_id' not in session: return
+    conn = get_db()
+    u = conn.execute("SELECT id,role,is_active,permissions FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    conn.close()
+    if not u or not u['is_active']:
+        session.clear(); flash('Your account is not active.', 'danger'); return redirect(url_for('login'))
+    session['role'] = u['role']
+    g.perms = user_perms(u['role'], u['permissions'])
+    if u['role'] == 'admin': return
+    need = ENDPOINT_PERM.get(ep)
+    if ep not in SALES_ENDPOINTS or (need and need not in g.perms):
+        flash('You do not have permission to do that.', 'danger')
+        return redirect(url_for('invoices'))
+
+@app.context_processor
+def inject_perms():
+    def can(p): return session.get('role') == 'admin' or p in getattr(g, 'perms', ())
+    return dict(can=can)
+
+def can_see_all_invoices():
+    return session.get('role') == 'admin' or 'inv_view_all' in getattr(g, 'perms', ())
+
+def invoice_allowed(iid):
+    """Admins / 'see all' users: any invoice. Others: only invoices they created."""
+    if can_see_all_invoices(): return True
+    conn = get_db(); r = conn.execute("SELECT created_by FROM invoices WHERE id=?", (iid,)).fetchone(); conn.close()
+    return bool(r) and r['created_by'] == session.get('user_id')
+
+def _no_access():
+    flash('You do not have access to that invoice.', 'danger')
+    return redirect(url_for('invoices'))
+
+def home_url():
+    return url_for('dashboard') if session.get('role') == 'admin' else url_for('invoices')
+
 def login_req(f):
     @wraps(f)
     def d(*a, **k):
@@ -504,7 +570,7 @@ def admin_req(f):
 
 # ── AUTH ───────────────────────────────────────────────────────────────────
 @app.route('/')
-def index(): return redirect(url_for('dashboard') if 'user_id' in session else url_for('login'))
+def index(): return redirect(home_url() if 'user_id' in session else url_for('login'))
 
 @app.route('/login', methods=['GET','POST'])
 def login():
@@ -517,7 +583,7 @@ def login():
             session['full_name']=user['full_name'] or user['username']; session['role']=user['role']
             session.permanent='remember' in request.form
             conn2=get_db(); conn2.execute("UPDATE users SET last_login=CURRENT_TIMESTAMP WHERE id=?",(user['id'],)); conn2.commit(); conn2.close()
-            audit('LOGIN'); return redirect(url_for('dashboard'))
+            audit('LOGIN'); return redirect(home_url())
         flash('Invalid username or password.','danger')
     return render_template('login.html', s=gall())
 
@@ -574,6 +640,7 @@ def invoices():
     if q: base+=" AND (i.invoice_number LIKE ? OR i.client_name LIKE ?)"; params+=[f'%{q}%',f'%{q}%']
     if co_id: base+=" AND i.company_id=?"; params.append(co_id)
     if inv_type: base+=" AND i.invoice_type=?"; params.append(inv_type)
+    if not can_see_all_invoices(): base+=" AND i.created_by=?"; params.append(session.get('user_id'))
     base+=" ORDER BY i.id DESC"
     rows=conn.execute(base,params).fetchall()
     companies=conn.execute("SELECT * FROM companies WHERE is_active=1 ORDER BY sort_order").fetchall()
@@ -607,6 +674,7 @@ def new_invoice():
 @app.route('/invoices/<int:iid>/edit', methods=['GET','POST'])
 @login_req
 def edit_invoice(iid):
+    if not invoice_allowed(iid): return _no_access()
     s=gall(); conn=get_db()
     inv=conn.execute("SELECT * FROM invoices WHERE id=?",(iid,)).fetchone()
     if not inv: flash('Not found.','danger'); conn.close(); return redirect(url_for('invoices'))
@@ -749,6 +817,7 @@ def _save_inv_impl(iid,s,held):
 @app.route('/invoices/<int:iid>')
 @login_req
 def view_invoice(iid):
+    if not invoice_allowed(iid): return _no_access()
     conn=get_db()
     inv=conn.execute("SELECT i.*,c.name as co_name,c.code as co_code FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.id=?",(iid,)).fetchone()
     items=conn.execute("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY sr_no",(iid,)).fetchall()
@@ -764,6 +833,7 @@ def view_invoice(iid):
 @app.route('/invoices/<int:iid>/delete', methods=['POST'])
 @login_req
 def delete_invoice(iid):
+    if not invoice_allowed(iid): return _no_access()
     conn=get_db(); inv=conn.execute("SELECT invoice_number FROM invoices WHERE id=?",(iid,)).fetchone()
     conn.execute("UPDATE invoices SET status='deleted' WHERE id=?",(iid,)); conn.commit(); conn.close()
     if inv: audit('INVOICE_DELETED',inv['invoice_number'])
@@ -777,6 +847,7 @@ def _linked_tax(conn, inv):
 @app.route('/invoices/<int:iid>/convert-to-tax', methods=['POST'])
 @login_req
 def convert_to_tax(iid):
+    if not invoice_allowed(iid): return _no_access()
     """Create a NEW Tax Invoice from a Proforma. The proforma is kept untouched."""
     conn=get_db(); inv=conn.execute("SELECT * FROM invoices WHERE id=?",(iid,)).fetchone()
     if not inv or inv['status']!='active':
@@ -820,6 +891,7 @@ def convert_to_tax(iid):
 @app.route('/invoices/<int:iid>/undo-convert', methods=['POST'])
 @login_req
 def undo_convert(iid):
+    if not invoice_allowed(iid): return _no_access()
     """Undo a conversion: remove the Tax Invoice that was generated; the Proforma stays as it was."""
     conn=get_db(); inv=conn.execute("SELECT * FROM invoices WHERE id=?",(iid,)).fetchone()
     if not inv:
@@ -829,6 +901,8 @@ def undo_convert(iid):
     else:
         pro_id=inv['converted_from_id']; tax_id=iid
     tax=conn.execute("SELECT * FROM invoices WHERE id=?",(tax_id,)).fetchone() if tax_id else None
+    if tax and not can_see_all_invoices() and tax['created_by'] != session.get('user_id'):
+        conn.close(); return _no_access()
     if tax and not tax['converted_from_id']:
         conn.close(); flash('This Tax Invoice was not created from a Proforma.','warning'); return redirect(url_for('view_invoice',iid=iid))
     if tax:
@@ -848,6 +922,7 @@ def undo_convert(iid):
 @app.route('/invoices/<int:iid>/duplicate')
 @login_req
 def duplicate_invoice(iid):
+    if not invoice_allowed(iid): return _no_access()
     conn=get_db(); inv=conn.execute("SELECT * FROM invoices WHERE id=?",(iid,)).fetchone()
     items=conn.execute("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY sr_no",(iid,)).fetchall()
     if not inv: conn.close(); flash('Not found.','danger'); return redirect(url_for('invoices'))
@@ -886,6 +961,7 @@ def duplicate_invoice(iid):
 @app.route('/invoices/<int:iid>/pdf')
 @login_req
 def download_pdf(iid):
+    if not invoice_allowed(iid): return _no_access()
     conn=get_db(); inv=conn.execute("SELECT * FROM invoices WHERE id=?",(iid,)).fetchone(); conn.close()
     if not inv: flash('Not found.','danger'); return redirect(url_for('invoices'))
     p=inv['pdf_path']
@@ -896,6 +972,7 @@ def download_pdf(iid):
 @app.route('/invoices/<int:iid>/preview')
 @login_req
 def preview_pdf(iid):
+    if not invoice_allowed(iid): return _no_access()
     conn=get_db(); inv=conn.execute("SELECT * FROM invoices WHERE id=?",(iid,)).fetchone(); conn.close()
     if not inv: return "Not found",404
     p=inv['pdf_path']
@@ -1459,7 +1536,7 @@ def set_default_stamp(sid):
 @admin_req
 def users():
     conn=get_db(); rows=conn.execute("SELECT * FROM users ORDER BY role,username").fetchall(); conn.close()
-    return render_template('users.html', users=rows, s=gall())
+    return render_template('users.html', users=rows, s=gall(), perm_defs=INVOICE_PERMS, user_perms=user_perms)
 
 @app.route('/users/new', methods=['GET','POST'])
 @admin_req
@@ -1467,14 +1544,16 @@ def new_user():
     if request.method=='POST':
         f=request.form; conn=get_db()
         try:
-            _u_sql = "INSERT INTO users(username,password_hash,full_name,email,role) VALUES(%s,%s,%s,%s,%s)" if USE_PG else "INSERT INTO users(username,password_hash,full_name,email,role) VALUES(?,?,?,?,?)"
+            _u_sql = "INSERT INTO users(username,password_hash,full_name,email,role,permissions) VALUES(%s,%s,%s,%s,%s,%s)" if USE_PG else "INSERT INTO users(username,password_hash,full_name,email,role,permissions) VALUES(?,?,?,?,?,?)"
+            role=f.get('role','user') if f.get('role') in ('admin','user') else 'user'
             conn.execute(_u_sql,
-                         (f.get('username'),generate_password_hash(f.get('password','')),f.get('full_name'),f.get('email'),f.get('role','user')))
+                         (f.get('username'),generate_password_hash(f.get('password','')),f.get('full_name'),f.get('email'),role,
+                          ','.join(p for p in INVOICE_PERMS if p in f.getlist('perm'))))
             conn.commit(); audit('USER_CREATED',f.get('username')); flash('User created.','success')
         except Exception as e: flash(f'Error: {e}','danger')
         finally: conn.close()
         return redirect(url_for('users'))
-    return render_template('user_form.html', u=None, mode='new', s=gall())
+    return render_template('user_form.html', u=None, mode='new', s=gall(), perm_defs=INVOICE_PERMS, u_perms=set(DEFAULT_PERMS))
 
 @app.route('/users/<int:uid>/edit', methods=['GET','POST'])
 @admin_req
@@ -1482,12 +1561,16 @@ def edit_user(uid):
     conn=get_db(); u=conn.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
     if request.method=='POST':
         f=request.form
-        conn.execute("UPDATE users SET full_name=?,email=?,role=?,is_active=? WHERE id=?",
-                     (f.get('full_name'),f.get('email'),f.get('role'),1 if f.get('is_active') else 0,uid))
+        role=f.get('role') if f.get('role') in ('admin','user') else 'user'
+        active=1 if f.get('is_active') else 0
+        if uid==session.get('user_id'): role='admin'; active=1      # never lock yourself out
+        conn.execute("UPDATE users SET full_name=?,email=?,role=?,is_active=?,permissions=? WHERE id=?",
+                     (f.get('full_name'),f.get('email'),role,active,
+                      ','.join(p for p in INVOICE_PERMS if p in f.getlist('perm')),uid))
         if f.get('password'): conn.execute("UPDATE users SET password_hash=? WHERE id=?",(generate_password_hash(f.get('password')),uid))
         conn.commit(); conn.close(); audit('USER_EDITED',f.get('full_name')); flash('Updated.','success')
         return redirect(url_for('users'))
-    conn.close(); return render_template('user_form.html', u=u, mode='edit', s=gall())
+    conn.close(); return render_template('user_form.html', u=u, mode='edit', s=gall(), perm_defs=INVOICE_PERMS, u_perms=user_perms(u['role'],u['permissions']))
 
 @app.route('/users/<int:uid>/delete', methods=['POST'])
 @admin_req
