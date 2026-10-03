@@ -587,6 +587,11 @@ def edit_invoice(iid):
         selected_co_id=co_id, co=co, inv_type=inv['invoice_type'],
         bank=bank_for_company(co,s), co_banks={c['id']:bank_for_company(c,s) for c in companies})
 
+def _int_or_none(v):
+    """Form value -> int, or None for '', 'None', 'null' or anything non-numeric."""
+    try: return int(str(v).strip())
+    except (TypeError, ValueError): return None
+
 def _save_inv(iid,s):
     held=[]
     try:
@@ -605,11 +610,11 @@ def _save_inv_impl(iid,s,held):
     f=request.form; conn=get_db(); held.append(conn)
     co_id=int(f.get('company_id',1) or 1)
     inv_type=f.get('invoice_type','TAX')
-    sid=f.get('signatory_id') or None; sn=''; si=''
+    sid=_int_or_none(f.get('signatory_id')); sn=''; si=''
     if sid:
         sg=conn.execute("SELECT * FROM signatories WHERE id=?",(sid,)).fetchone()
         if sg: sn=sg['name']; si=sg['image_path'] or ''
-    stid=f.get('stamp_id') or None; stn=''; sti=''
+    stid=_int_or_none(f.get('stamp_id')); stn=''; sti=''
     if stid:
         st=conn.execute("SELECT * FROM stamps WHERE id=?",(stid,)).fetchone()
         if st: stn=st['name']; sti=st['image_path'] or ''
@@ -631,7 +636,7 @@ def _save_inv_impl(iid,s,held):
         'invoice_date':raw_date,
         'num_pages':f.get('num_pages','One (1)'),
         'purchase_order':f.get('purchase_order',''),
-        'client_id':f.get('client_id') or None,
+        'client_id':_int_or_none(f.get('client_id')),
         'client_name':f.get('client_name',''),
         'client_trn':f.get('client_trn',''),
         'client_address':f.get('client_address',''),
