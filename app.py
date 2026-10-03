@@ -3,7 +3,7 @@ Geometry Home Invoice Management System v8
 Multi-company | PostgreSQL (Railway) + SQLite (local) | UAE VAT
 """
 import os, io, re, json, base64, secrets, zipfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from flask import (Flask, render_template, request, redirect, url_for,
                    session, flash, jsonify, send_file, send_from_directory)
@@ -405,7 +405,7 @@ def next_inv_num(company_id, inv_type='TAX'):
             "SELECT invoice_number FROM invoices WHERE company_id=? AND invoice_type=? ORDER BY id DESC LIMIT 1",
             (company_id, inv_type)).fetchone()
     conn.close()
-    year = datetime.now().year
+    year = now_dubai().year
     prefix = co['invoice_prefix'] if inv_type == 'TAX' else co['proforma_prefix']
     if row:
         try: num = int(row['invoice_number'].split('-')[-1]) + 1
@@ -444,6 +444,34 @@ def fmt_date(d):
     return str(d)
 
 app.jinja_env.globals['fmt_date'] = fmt_date
+
+# ── Dubai time (UTC+4, no daylight saving) ─────────────────────────────
+DUBAI_TZ = timezone(timedelta(hours=4))
+
+def now_dubai():
+    """Current Dubai time as a naive datetime (the server itself may run in UTC)."""
+    return datetime.now(DUBAI_TZ).replace(tzinfo=None)
+
+def dubai_time(value, fmt='%Y-%m-%d %H:%M'):
+    """Show a stored database timestamp (UTC, as written by CURRENT_TIMESTAMP) in Dubai time."""
+    if not value: return '—'
+    txt = str(value).strip()
+    m = re.match(r'(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?\s*(Z|[+-]\d{2}(?::?\d{2})?)?$', txt)
+    if not m: return txt[:19]
+    try:
+        dt = datetime.strptime(f"{m.group(1)} {m.group(2)}", '%Y-%m-%d %H:%M:%S')
+        off = m.group(3)
+        if off and off != 'Z':
+            sign = -1 if off[0] == '-' else 1
+            digits = off[1:].replace(':', '')
+            offset = timedelta(hours=int(digits[:2]), minutes=int(digits[2:4] or 0)) * sign
+        else:
+            offset = timedelta(0)            # no offset stored -> UTC
+        return (dt - offset + timedelta(hours=4)).strftime(fmt)
+    except Exception:
+        return txt[:19]
+
+app.jinja_env.filters['dubai'] = dubai_time
 
 def login_req(f):
     @wraps(f)
@@ -509,7 +537,7 @@ def dashboard():
     conn=get_db()
     total_inv=conn.execute("SELECT COUNT(*) c FROM invoices WHERE status='active'").fetchone()['c']
     total_cl=conn.execute("SELECT COUNT(*) c FROM clients WHERE is_active=1").fetchone()['c']
-    mo=datetime.now().strftime('%Y-%m')
+    mo=now_dubai().strftime('%Y-%m')
     monthly=float(conn.execute("SELECT COALESCE(SUM(net_payable),0) s FROM invoices WHERE invoice_date LIKE ? AND status='active'",(f'{mo}%',)).fetchone()['s'])
     total_vat=float(conn.execute("SELECT COALESCE(SUM(vat_amount),0) s FROM invoices WHERE status='active'").fetchone()['s'])
     recent=conn.execute("SELECT i.*,c.name as co_name,c.code as co_code FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.status='active' ORDER BY i.id DESC LIMIT 10").fetchall()
@@ -752,7 +780,7 @@ def convert_to_tax(iid):
     items=conn.execute("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY sr_no",(iid,)).fetchall()
     conn.close()
     new_no=next_inv_num(inv['company_id'] or 1,'TAX')
-    now=datetime.now()
+    now=now_dubai()
     skip={'id','pdf_path','created_at','updated_at'}
     row={k:inv[k] for k in inv.keys() if k not in skip}
     row.update({'invoice_number':new_no,'invoice_type':'TAX','invoice_date':now.strftime('%Y-%m-%d'),
@@ -823,7 +851,7 @@ def duplicate_invoice(iid):
         include_signature,include_stamp,created_by)
         VALUES({_ph(34)})""" + (" RETURNING id" if USE_PG else "")
     _dup_cur=conn.execute(_dup_sql,
-        (nn,inv_type,co_id,datetime.now().strftime('%Y-%m-%d'),inv['num_pages'],inv['purchase_order'],
+        (nn,inv_type,co_id,now_dubai().strftime('%Y-%m-%d'),inv['num_pages'],inv['purchase_order'],
          inv['client_id'],inv['client_name'],inv['client_trn'],inv['client_address'],inv['client_country'],
          inv['client_telephone'],inv['client_email'],inv['bank_name'],inv['bank_iban'],inv['bank_account'],
          inv['bank_swift'],inv['currency'],inv['subtotal'],inv['vat_amount'],inv['net_payable'],
@@ -891,7 +919,7 @@ def gen_pdf(iid):
     inv_type   = inv["invoice_type"] or "TAX"
     type_label = "PROFORMA INVOICE" if inv_type == "PROFORMA" else "TAX INVOICE"
 
-    year     = inv["invoice_date"][:4] if inv["invoice_date"] else str(datetime.now().year)
+    year     = inv["invoice_date"][:4] if inv["invoice_date"] else str(now_dubai().year)
     ydir     = os.path.join(ARCHIVE_DIR, year)
     os.makedirs(ydir, exist_ok=True)
     pdf_path = os.path.join(ydir, f"{inv['invoice_number']}.pdf")
@@ -1170,7 +1198,7 @@ def gen_pdf(iid):
         os.replace(tmp_path, pdf_path)
     except OSError:
         # Old PDF is locked (e.g. still open in a viewer on Windows): keep it and save the new one under a new name
-        alt = pdf_path[:-4] + "_" + datetime.now().strftime("%H%M%S") + ".pdf"
+        alt = pdf_path[:-4] + "_" + now_dubai().strftime("%H%M%S") + ".pdf"
         os.replace(tmp_path, alt)
         return alt
     return pdf_path
@@ -1488,8 +1516,8 @@ def company_settings():
 @app.route('/reports')
 @login_req
 def reports():
-    period=request.args.get('period','monthly'); year=request.args.get('year',str(datetime.now().year))
-    month=request.args.get('month',str(datetime.now().month).zfill(2)); co_filter=request.args.get('co','')
+    period=request.args.get('period','monthly'); year=request.args.get('year',str(now_dubai().year))
+    month=request.args.get('month',str(now_dubai().month).zfill(2)); co_filter=request.args.get('co','')
     inv_type=request.args.get('type','')
     conn=get_db()
     base="SELECT i.*,c.name as co_name,c.code as co_code FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.status='active'"
@@ -1497,9 +1525,9 @@ def reports():
     if co_filter: base+=" AND i.company_id=?"; params.append(co_filter)
     if inv_type: base+=" AND i.invoice_type=?"; params.append(inv_type)
     if period=='daily':
-        today=datetime.now().strftime('%Y-%m-%d'); base+=" AND i.invoice_date=?"; params.append(today)
+        today=now_dubai().strftime('%Y-%m-%d'); base+=" AND i.invoice_date=?"; params.append(today)
     elif period=='weekly':
-        wa=(datetime.now()-timedelta(days=7)).strftime('%Y-%m-%d'); base+=" AND i.invoice_date>=?"; params.append(wa)
+        wa=(now_dubai()-timedelta(days=7)).strftime('%Y-%m-%d'); base+=" AND i.invoice_date>=?"; params.append(wa)
     elif period=='monthly': base+=" AND i.invoice_date LIKE ?"; params.append(f'{year}-{month}%')
     elif period=='quarterly':
         q=(int(month)-1)//3; months=[f'{year}-{str(q*3+i+1).zfill(2)}%' for i in range(3)]
@@ -1543,7 +1571,7 @@ _ILLEGAL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
 def backup():
     """One-click full backup: every table + uploaded logos/stamps/signatures in a single Excel file."""
     from openpyxl import Workbook
-    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    ts = now_dubai().strftime('%Y%m%d_%H%M%S')
     wb = Workbook(); meta = wb.active; meta.title = '_meta'
     conn = get_db(); counts = {}
     for t in BACKUP_TABLES:
@@ -1569,7 +1597,7 @@ def backup():
                 fs.append([rel, i//30000, b64[i:i+30000]])
             nfiles += 1
     meta.append(['key','value'])
-    for k, v in [('app','GH Invoicing Backup'),('format_version',1),('created',datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+    for k, v in [('app','GH Invoicing Backup'),('format_version',1),('created',now_dubai().strftime('%Y-%m-%d %H:%M:%S')),
                  ('database','PostgreSQL' if USE_PG else 'SQLite'),('files',nfiles)] + [(f'rows:{t}',n) for t,n in counts.items()]:
         meta.append([k, v])
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
