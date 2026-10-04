@@ -2,7 +2,7 @@
 Geometry Home Invoice Management System v8
 Multi-company | PostgreSQL (Railway) + SQLite (local) | UAE VAT
 """
-import os, io, re, json, base64, secrets, zipfile
+import os, io, re, json, time, base64, secrets, zipfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from flask import (Flask, g, render_template, request, redirect, url_for,
@@ -18,7 +18,7 @@ IMAGES_DIR  = os.path.join(BASE_DIR, "static", "images")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024
 
 for d in [ARCHIVE_DIR, IMAGES_DIR,
           os.path.join(UPLOAD_DIR,"logos"),
@@ -1698,15 +1698,255 @@ def backup():
     return send_file(buf, as_attachment=True, download_name=f'GH_Backup_{ts}.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
+# ── shared restore engine (used by Excel and full-ZIP restore) ─────────────
+def _coerce_for_column(v, ty):
+    if v is None: return None
+    if 'int' in ty and isinstance(v, float) and v.is_integer(): return int(v)
+    if ('char' in ty or 'text' in ty) and not isinstance(v, str):
+        return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+    if ty in ('real', 'double precision', 'numeric', 'float') and isinstance(v, int) and not isinstance(v, bool): return float(v)
+    return v
+
+def _read_sequences(conn):
+    """Last id handed out per table, so ids continue exactly as before after a restore."""
+    seqs = {}
+    try:
+        if USE_PG:
+            for t in BACKUP_TABLES:
+                if 'id' not in dict(_table_cols(conn, t)): continue
+                sn = conn.execute("SELECT pg_get_serial_sequence(?, 'id') AS sn", (t,)).fetchone()['sn']
+                if not sn: continue
+                r = conn.execute(f"SELECT last_value, is_called FROM {sn}").fetchone()
+                seqs[t] = int(r['last_value']) if r['is_called'] else int(r['last_value']) - 1
+        else:
+            for r in conn.execute("SELECT name, seq FROM sqlite_sequence").fetchall():
+                if r['name'] in BACKUP_TABLES: seqs[r['name']] = int(r['seq'])
+    except Exception:
+        app.logger.exception('could not read id sequences')
+    return seqs
+
+def _replace_all_tables(conn, tables, sequences=None):
+    """Replace the content of every backup table. tables = {name: (columns, rows)}. Caller commits/rolls back."""
+    info = {t: _table_cols(conn, t) for t in BACKUP_TABLES}
+    for t in reversed(BACKUP_TABLES): conn.execute(f"DELETE FROM {t}")
+    counts = {}
+    for t in BACKUP_TABLES:
+        header, rows = tables[t]
+        types = dict(info[t])
+        use = [(i, h) for i, h in enumerate(header) if h in types]
+        n = 0
+        for r in rows:
+            if all(v is None for v in r): continue
+            vals = [_coerce_for_column(r[i] if i < len(r) else None, types[h]) for i, h in use]
+            conn.execute(f"INSERT INTO {t}({','.join(h for _,h in use)}) VALUES({','.join(['?']*len(use))})", vals)
+            n += 1
+        counts[t] = n
+        if 'id' in types:
+            maxid = conn.execute(f"SELECT COALESCE(MAX(id),0) AS m FROM {t}").fetchone()['m']
+            last = max(int((sequences or {}).get(t, 0)), int(maxid))
+            if USE_PG:
+                conn.execute(f"SELECT setval(pg_get_serial_sequence('{t}','id'), ?, ?)", (max(last, 1), last >= 1))
+            elif sequences and t in sequences:
+                try:
+                    if conn.execute("SELECT 1 FROM sqlite_sequence WHERE name=?", (t,)).fetchone():
+                        conn.execute("UPDATE sqlite_sequence SET seq=? WHERE name=?", (last, t))
+                    else:
+                        conn.execute("INSERT INTO sqlite_sequence(name,seq) VALUES(?,?)", (t, last))
+                except Exception:
+                    app.logger.exception('could not restore sqlite sequence for %s', t)
+    return counts
+
+def _ensure_upload_dirs():
+    for d in (UPLOAD_DIR, ARCHIVE_DIR):
+        os.makedirs(d, exist_ok=True)
+    for sub in ('logos', 'stamps', 'signatures'):
+        os.makedirs(os.path.join(UPLOAD_DIR, sub), exist_ok=True)
+
+# ── FULL ZIP BACKUP ────────────────────────────────────────────────────────
+FULL_BACKUP_APP = 'GH Invoicing Full Backup'
+_FILE_ROOTS = (('uploads', lambda: UPLOAD_DIR), ('archive', lambda: ARCHIVE_DIR))
+
+def _json_default(o):
+    from decimal import Decimal
+    if isinstance(o, Decimal): return float(o)
+    if hasattr(o, 'isoformat'): return o.isoformat(sep=' ')
+    return str(o)
+
+def _sha256_bytes(b):
+    import hashlib; return hashlib.sha256(b).hexdigest()
+
+def _pdf_path_out(v):
+    """Store archive PDF paths relative to the archive folder so they work on any server."""
+    if isinstance(v, str) and v:
+        root = os.path.normpath(ARCHIVE_DIR) + os.sep
+        if os.path.normpath(v).startswith(root):
+            return '@archive/' + os.path.relpath(os.path.normpath(v), ARCHIVE_DIR).replace(os.sep, '/')
+    return v
+
+def _pdf_path_in(v):
+    if isinstance(v, str) and v.startswith('@archive/'):
+        return os.path.join(ARCHIVE_DIR, *v[len('@archive/'):].split('/'))
+    return v
+
+def _build_full_backup(fobj):
+    """Write the complete backup (all tables exactly + every uploaded/archived file + checksums) into fobj."""
+    import zipfile
+    manifest = {'app': FULL_BACKUP_APP, 'format_version': 1,
+                'created': now_dubai().strftime('%Y-%m-%d %H:%M:%S'),
+                'database': 'PostgreSQL' if USE_PG else 'SQLite', 'tables': {}, 'sequences': {}, 'files': []}
+    with zipfile.ZipFile(fobj, 'w', zipfile.ZIP_DEFLATED) as z:
+        conn = get_db()
+        for t in BACKUP_TABLES:
+            cols = [c for c, _ in _table_cols(conn, t)]
+            rows = conn.execute(f"SELECT * FROM {t}").fetchall()
+            data = []
+            for r in rows:
+                data.append([_pdf_path_out(r[c]) if (t == 'invoices' and c == 'pdf_path') else r[c] for c in cols])
+            payload = json.dumps({'table': t, 'columns': cols, 'rows': data}, ensure_ascii=False, default=_json_default).encode('utf-8')
+            z.writestr(f'database/{t}.json', payload)
+            manifest['tables'][t] = {'rows': len(rows), 'sha256': _sha256_bytes(payload)}
+        manifest['sequences'] = _read_sequences(conn)
+        conn.close()
+        for label, getroot in _FILE_ROOTS:
+            root = getroot()
+            for dp, dn, fns in os.walk(root):
+                dn.sort()
+                for fn in sorted(fns):
+                    fp = os.path.join(dp, fn)
+                    if fn.endswith('.restore_tmp'): continue
+                    rel = os.path.relpath(fp, root).replace(os.sep, '/')
+                    arc = f'files/{label}/{rel}'
+                    with open(fp, 'rb') as fh: data = fh.read()
+                    mt = os.path.getmtime(fp)
+                    dt = time.localtime(mt)[:6]
+                    zi = zipfile.ZipInfo(arc, date_time=dt if dt[0] >= 1980 else (1980, 1, 1, 0, 0, 0))
+                    zi.compress_type = zipfile.ZIP_DEFLATED
+                    z.writestr(zi, data)
+                    manifest['files'].append({'path': arc, 'size': len(data), 'sha256': _sha256_bytes(data), 'mtime': mt})
+        z.writestr('manifest.json', json.dumps(manifest, indent=1))
+        z.writestr('README.txt',
+            "GH Invoicing - full backup\n"
+            f"Created: {manifest['created']} (Dubai time)\n\n"
+            "database/*.json   every table, all columns, exactly as stored (ids included)\n"
+            "files/uploads/    logos, stamps, signatures, letterheads\n"
+            "files/archive/    generated invoice PDFs\n"
+            "manifest.json     row counts and SHA-256 checksums of everything above\n\n"
+            "To restore: sign in as admin > Restore Backup > choose this .zip file.\n"
+            "Restoring replaces ALL current data with the contents of this file.\n")
+    return manifest
+
+def _save_prestore_snapshot():
+    """Safety copy of the current state, kept on the server in ./Backups (newest 3)."""
+    try:
+        d = os.path.join(BASE_DIR, 'Backups'); os.makedirs(d, exist_ok=True)
+        name = f"pre-restore_{now_dubai().strftime('%Y%m%d_%H%M%S')}.zip"
+        with open(os.path.join(d, name), 'wb') as fh: _build_full_backup(fh)
+        old = sorted(x for x in os.listdir(d) if x.startswith('pre-restore_') and x.endswith('.zip'))
+        for x in old[:-3]:
+            try: os.remove(os.path.join(d, x))
+            except OSError: pass
+        return name
+    except Exception:
+        app.logger.exception('pre-restore snapshot failed')
+        return None
+
+@app.route('/backup/zip')
+@admin_req
+def backup_zip():
+    """One-click complete backup (database + all files) as a single ZIP."""
+    import tempfile
+    tmp = tempfile.TemporaryFile()
+    man = _build_full_backup(tmp); tmp.seek(0)
+    audit('FULL_BACKUP_CREATED', f"{sum(t['rows'] for t in man['tables'].values())} rows, {len(man['files'])} files")
+    return send_file(tmp, as_attachment=True, download_name=f"GH_FullBackup_{now_dubai().strftime('%Y%m%d_%H%M%S')}.zip",
+                     mimetype='application/zip')
+
+def _restore_full_zip(fi):
+    """Verify first (nothing is touched unless every checksum matches), then restore database + files exactly."""
+    import zipfile, hashlib, shutil
+    try:
+        z = zipfile.ZipFile(fi.stream)
+        bad = z.testzip()
+        if bad: raise ValueError(f'Corrupt file inside the zip: {bad}')
+        man = json.loads(z.read('manifest.json'))
+        if man.get('app') != FULL_BACKUP_APP: raise ValueError('This is not a GH Invoicing full backup.')
+        tables = {}
+        for t in BACKUP_TABLES:
+            meta = (man.get('tables') or {}).get(t)
+            if meta is None: raise ValueError(f'Table "{t}" is missing from the backup.')
+            raw = z.read(f'database/{t}.json')
+            if _sha256_bytes(raw) != meta['sha256']: raise ValueError(f'Checksum mismatch for table "{t}" - the backup is damaged.')
+            d = json.loads(raw)
+            if len(d['rows']) != meta['rows']: raise ValueError(f'Row count mismatch for table "{t}".')
+            cols = d['columns']
+            if t == 'invoices' and 'pdf_path' in cols:
+                pi = cols.index('pdf_path')
+                for r in d['rows']: r[pi] = _pdf_path_in(r[pi])
+            tables[t] = (cols, d['rows'])
+        entries = {}
+        for e in man.get('files', []):
+            p = e['path']; parts = p.split('/')
+            if len(parts) < 3 or parts[0] != 'files' or parts[1] not in ('uploads', 'archive') or '..' in parts or p.startswith('/') or '\\' in p:
+                raise ValueError(f'Unsafe path in backup: {p}')
+            h = hashlib.sha256(); size = 0
+            with z.open(p) as src:
+                for chunk in iter(lambda: src.read(1 << 20), b''):
+                    h.update(chunk); size += len(chunk)
+            if h.hexdigest() != e['sha256'] or size != e['size']: raise ValueError(f'Checksum mismatch for file {p}.')
+            entries[p] = e
+    except Exception as ex:
+        flash(f'Cannot restore: {ex}', 'danger'); return redirect(url_for('restore_backup'))
+
+    snapshot = _save_prestore_snapshot()
+    conn = get_db()
+    try:
+        counts = _replace_all_tables(conn, tables, man.get('sequences'))
+        conn.commit()
+    except Exception as ex:
+        try: conn._conn.rollback()
+        except Exception: pass
+        conn.close(); app.logger.exception('zip restore failed (database)')
+        flash(f'Restore failed, nothing was changed: {ex}', 'danger'); return redirect(url_for('restore_backup'))
+    conn.close()
+
+    try:
+        for label, getroot in _FILE_ROOTS:
+            root = getroot(); tmp = root + '.restore_tmp'; old = root + '.restore_old'
+            for p in (tmp, old):
+                if os.path.exists(p): shutil.rmtree(p, ignore_errors=True)
+            os.makedirs(tmp)
+            prefix = f'files/{label}/'
+            for p, e in entries.items():
+                if not p.startswith(prefix): continue
+                dest = os.path.join(tmp, *p[len(prefix):].split('/'))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with z.open(p) as src, open(dest, 'wb') as out: shutil.copyfileobj(src, out)
+                if e.get('mtime'): os.utime(dest, (e['mtime'], e['mtime']))
+            if os.path.exists(root): os.replace(root, old)
+            os.replace(tmp, root)
+            shutil.rmtree(old, ignore_errors=True)
+        _ensure_upload_dirs()
+    except Exception as ex:
+        app.logger.exception('zip restore failed (files)')
+        flash(f'Database restored, but writing files failed: {ex}. A safety copy is in the Backups folder.', 'danger')
+        return redirect(url_for('login'))
+    app.logger.info('Full backup restored: %s', counts)
+    session.clear()
+    flash(f"Full backup restored exactly ({counts.get('invoices',0)} invoices, {counts.get('companies',0)} companies, "
+          f"{len(entries)} files). Please log in again." + (f" A safety copy of the previous data was saved as Backups/{snapshot}." if snapshot else ''), 'success')
+    return redirect(url_for('login'))
+
 @app.route('/restore', methods=['GET','POST'])
 @admin_req
 def restore_backup():
     if request.method == 'GET':
         return render_template('restore.html', s=gall())
-    from openpyxl import load_workbook
     fi = request.files.get('backup_file')
-    if not fi or not fi.filename.lower().endswith('.xlsx'):
-        flash('Please choose a GH backup .xlsx file.', 'danger'); return redirect(url_for('restore_backup'))
+    name = (fi.filename or '').lower() if fi else ''
+    if name.endswith('.zip'): return _restore_full_zip(fi)
+    from openpyxl import load_workbook
+    if not fi or not name.endswith('.xlsx'):
+        flash('Please choose a GH backup file (.zip full backup or .xlsx).', 'danger'); return redirect(url_for('restore_backup'))
     try:
         wb = load_workbook(fi, data_only=True)
         if '_meta' not in wb.sheetnames or any(t not in wb.sheetnames for t in BACKUP_TABLES):
@@ -1716,33 +1956,14 @@ def restore_backup():
     except Exception as e:
         flash(f'Cannot read backup: {e}', 'danger'); return redirect(url_for('restore_backup'))
 
-    conn = get_db(); restored = {}
+    conn = get_db()
     try:
-        info = {t: _table_cols(conn, t) for t in BACKUP_TABLES}
-        for t in reversed(BACKUP_TABLES): conn.execute(f"DELETE FROM {t}")
+        tables = {}
         for t in BACKUP_TABLES:
             rows = wb[t].iter_rows(values_only=True)
-            header = next(rows, None) or ()
-            types = dict(info[t])
-            use = [(i, h) for i, h in enumerate(header) if h in types]
-            n = 0
-            for r in rows:
-                if all(v is None for v in r): continue
-                vals = []
-                for i, h in use:
-                    v = r[i] if i < len(r) else None
-                    ty = types[h]
-                    if v is not None:
-                        if 'int' in ty and isinstance(v, float) and v.is_integer(): v = int(v)
-                        elif ('char' in ty or 'text' in ty) and not isinstance(v, str):
-                            v = str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
-                        elif ty in ('real','double precision','numeric') and isinstance(v, int): v = float(v)
-                    vals.append(v)
-                conn.execute(f"INSERT INTO {t}({','.join(h for _,h in use)}) VALUES({','.join(['?']*len(use))})", vals)
-                n += 1
-            restored[t] = n
-            if USE_PG and 'id' in types:
-                conn.execute(f"SELECT setval(pg_get_serial_sequence('{t}','id'), COALESCE((SELECT MAX(id) FROM {t}),0)+1, false)")
+            header = list(next(rows, None) or ())
+            tables[t] = (header, rows)
+        restored = _replace_all_tables(conn, tables)
         conn.commit()
     except Exception as e:
         try: conn._conn.rollback()
