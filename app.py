@@ -610,24 +610,27 @@ def change_password():
 @app.route('/dashboard')
 @login_req
 def dashboard():
+    # Revenue = Tax Invoices only. Proforma invoices are quotes/advance requests, so they are reported separately.
+    TAX="COALESCE(invoice_type,'TAX')<>'PROFORMA'"; PRO="invoice_type='PROFORMA'"
     conn=get_db()
-    total_inv=conn.execute("SELECT COUNT(*) c FROM invoices WHERE status='active'").fetchone()['c']
+    def agg(kind, extra="", params=()):
+        r=conn.execute(f"SELECT COUNT(*) c, COALESCE(SUM(net_payable),0) s, COALESCE(SUM(vat_amount),0) v FROM invoices WHERE status='active' AND {kind}{extra}", params).fetchone()
+        return {'count':r['c'],'amount':float(r['s']),'vat':float(r['v'])}
     total_cl=conn.execute("SELECT COUNT(*) c FROM clients WHERE is_active=1").fetchone()['c']
     mo=now_dubai().strftime('%Y-%m')
-    monthly=float(conn.execute("SELECT COALESCE(SUM(net_payable),0) s FROM invoices WHERE invoice_date LIKE ? AND status='active'",(f'{mo}%',)).fetchone()['s'])
-    total_vat=float(conn.execute("SELECT COALESCE(SUM(vat_amount),0) s FROM invoices WHERE status='active'").fetchone()['s'])
+    tax_all=agg(TAX); pro_all=agg(PRO)
+    tax_month=agg(TAX," AND invoice_date LIKE ?",(f'{mo}%',)); pro_month=agg(PRO," AND invoice_date LIKE ?",(f'{mo}%',))
     recent=conn.execute("SELECT i.*,c.name as co_name,c.code as co_code FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.status='active' ORDER BY i.id DESC LIMIT 10").fetchall()
     logs=conn.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 8").fetchall()
     companies=conn.execute("SELECT * FROM companies WHERE is_active=1 ORDER BY sort_order").fetchall()
     co_stats={}
     for co in companies:
-        n=conn.execute("SELECT COUNT(*) c FROM invoices WHERE company_id=? AND status='active'",(co['id'],)).fetchone()['c']
-        rev=float(conn.execute("SELECT COALESCE(SUM(net_payable),0) s FROM invoices WHERE company_id=? AND status='active'",(co['id'],)).fetchone()['s'])
-        co_stats[co['id']]={'count':n,'revenue':rev}
+        t=agg(TAX," AND company_id=?",(co['id'],)); p=agg(PRO," AND company_id=?",(co['id'],))
+        co_stats[co['id']]={'tax_count':t['count'],'revenue':t['amount'],'pro_count':p['count'],'pro_value':p['amount']}
     conn.close()
     return render_template('dashboard.html', s=gall(), companies=companies,
-        total_inv=total_inv, total_cl=total_cl, monthly=monthly,
-        total_vat=total_vat, recent=recent, logs=logs, co_stats=co_stats)
+        tax_all=tax_all, pro_all=pro_all, tax_month=tax_month, pro_month=pro_month,
+        total_cl=total_cl, recent=recent, logs=logs, co_stats=co_stats)
 
 # ── INVOICES ───────────────────────────────────────────────────────────────
 @app.route('/invoices')
@@ -1627,18 +1630,26 @@ def reports():
         base+=" AND (i.invoice_date LIKE ? OR i.invoice_date LIKE ? OR i.invoice_date LIKE ?)"; params+=months
     else: base+=" AND i.invoice_date LIKE ?"; params.append(f'{year}%')
     rows=conn.execute(base+" ORDER BY i.invoice_date DESC",params).fetchall()
-    total_sales=sum(r['net_payable'] for r in rows); total_vat=sum(r['vat_amount'] for r in rows)
-    chart_data=[]
+    tax_rows=[r for r in rows if (r['invoice_type'] or 'TAX')!='PROFORMA']
+    pro_rows=[r for r in rows if r['invoice_type']=='PROFORMA']
+    # Revenue / VAT collected count Tax Invoices only; Proforma is shown separately
+    total_sales=sum(r['net_payable'] or 0 for r in tax_rows); total_vat=sum(r['vat_amount'] or 0 for r in tax_rows)
+    pro_total=sum(r['net_payable'] or 0 for r in pro_rows)
+    chart_data=[]; chart_pro=[]
     for m in range(1,13):
         ms=str(m).zfill(2)
-        qry="SELECT COALESCE(SUM(net_payable),0) s FROM invoices WHERE status='active' AND invoice_date LIKE ?"
-        qp=[f'{year}-{ms}%']
-        if co_filter: qry+=" AND company_id=?"; qp.append(co_filter)
-        chart_data.append(float(conn.execute(qry,qp).fetchone()['s']))
+        for kind,out in (("COALESCE(invoice_type,'TAX')<>'PROFORMA'",chart_data),("invoice_type='PROFORMA'",chart_pro)):
+            qry=f"SELECT COALESCE(SUM(net_payable),0) s FROM invoices WHERE status='active' AND {kind} AND invoice_date LIKE ?"
+            qp=[f'{year}-{ms}%']
+            if co_filter: qry+=" AND company_id=?"; qp.append(co_filter)
+            out.append(float(conn.execute(qry,qp).fetchone()['s']))
+    if inv_type=='PROFORMA': chart_data=[0]*12
+    if inv_type=='TAX': chart_pro=[0]*12
     companies=conn.execute("SELECT * FROM companies WHERE is_active=1 ORDER BY sort_order").fetchall()
     conn.close()
     return render_template('reports.html', invoices=rows, total_sales=total_sales, total_vat=total_vat,
-        period=period, year=year, month=month, chart_data=json.dumps(chart_data),
+        tax_count=len(tax_rows), pro_count=len(pro_rows), pro_total=pro_total,
+        period=period, year=year, month=month, chart_data=json.dumps(chart_data), chart_pro=json.dumps(chart_pro),
         s=gall(), companies=companies, co_filter=co_filter, inv_type=inv_type)
 
 @app.route('/audit-log')

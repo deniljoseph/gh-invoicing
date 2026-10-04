@@ -9,8 +9,12 @@
       <span class="co-pill">{{ co.code }}</span>
     </div>
     <div style="padding:12px 18px;display:flex;gap:16px;">
-      <div style="flex:1;text-align:center;border-right:1px solid #eee;padding-right:16px;"><div style="font-size:22px;font-weight:700;">{{ st.get('count',0) }}</div><div style="font-size:11px;color:#888;">Invoices</div></div>
+      <div style="flex:1;text-align:center;border-right:1px solid #eee;padding-right:16px;"><div style="font-size:22px;font-weight:700;">{{ st.get('tax_count',0) }}</div><div style="font-size:11px;color:#888;">Tax Invoices</div></div>
       <div style="flex:1;text-align:center;"><div style="font-size:16px;font-weight:700;">{{ "{:,.0f}".format(st.get('revenue',0)) }}</div><div style="font-size:11px;color:#888;">Revenue (AED)</div></div>
+    </div>
+    <div style="margin:0 18px 12px;padding:6px 10px;background:#f8f6f1;border-radius:6px;font-size:11.5px;color:#7a6a45;display:flex;justify-content:space-between;">
+      <span><i class="bi bi-file-earmark-text me-1"></i>Proforma: <strong>{{ st.get('pro_count',0) }}</strong></span>
+      <span>AED {{ "{:,.0f}".format(st.get('pro_value',0)) }} <em style="color:#a99b78;">(not revenue)</em></span>
     </div>
     <div style="padding:0 14px 12px;display:flex;gap:8px;">
       <a href="{{ url_for('new_invoice') }}?co={{ co.id }}&type=TAX" class="btn btn-sm bg flex-fill text-center" style="font-size:12px;">Tax Invoice</a>
@@ -21,10 +25,10 @@
 </div>{% endfor %}
 </div>
 <div class="row g-3 mb-4">
-  <div class="col-6 col-lg-3"><div class="sc text-center"><div style="font-size:26px;font-weight:700;">{{ total_inv }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-receipt me-1"></i>Total Invoices</div></div></div>
+  <div class="col-6 col-lg-3"><div class="sc text-center"><div style="font-size:26px;font-weight:700;">{{ tax_all.count }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-receipt me-1"></i>Tax Invoices</div><div style="font-size:11px;color:#a99b78;margin-top:2px;">+ {{ pro_all.count }} proforma</div></div></div>
   <div class="col-6 col-lg-3"><div class="sc text-center"><div style="font-size:26px;font-weight:700;">{{ total_cl }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-people me-1"></i>Clients</div></div></div>
-  <div class="col-6 col-lg-3"><div class="sc text-center"><div style="font-size:17px;font-weight:700;">{{ "{:,.2f}".format(monthly) }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-calendar-month me-1"></i>Monthly (AED)</div></div></div>
-  <div class="col-6 col-lg-3"><div class="sc text-center"><div style="font-size:17px;font-weight:700;">{{ "{:,.2f}".format(total_vat) }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-percent me-1"></i>VAT Collected</div></div></div>
+  <div class="col-6 col-lg-3"><div class="sc text-center"><div style="font-size:17px;font-weight:700;">{{ "{:,.2f}".format(tax_month.amount) }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-calendar-month me-1"></i>Monthly Revenue (AED)</div><div style="font-size:11px;color:#a99b78;margin-top:2px;">Proforma this month: {{ "{:,.2f}".format(pro_month.amount) }}</div></div></div>
+  <div class="col-6 col-lg-3"><div class="sc text-center"><div style="font-size:17px;font-weight:700;">{{ "{:,.2f}".format(tax_all.vat) }}</div><div style="font-size:12px;color:#888;margin-top:3px;"><i class="bi bi-percent me-1"></i>VAT Collected</div><div style="font-size:11px;color:#a99b78;margin-top:2px;">Tax invoices only</div></div></div>
 </div>
 <div class="row g-3">
   <div class="col-lg-8">
