@@ -773,6 +773,25 @@ def _save_inv_impl(iid,s,held):
         conn.close()
         flash(f"Invoice number {data['invoice_number']} already exists. Please use a different number.",'danger')
         return redirect(url_for('edit_invoice',iid=iid) if iid else url_for('new_invoice',co=co_id,type=inv_type))
+    # Auto-add a manually typed client to the Clients archive (or link to the existing one with the same name)
+    cname=(data.get('client_name') or '').strip(); auto_client=None
+    if not data.get('client_id') and cname:
+        ex=conn.execute("SELECT * FROM clients WHERE is_active=1 AND LOWER(TRIM(name))=LOWER(?)",(cname,)).fetchone()
+        if ex:
+            data['client_id']=ex['id']
+            fill={k:data.get('client_'+k) for k in ('trn','address','telephone','email') if not (ex[k] or '').strip() and (data.get('client_'+k) or '').strip()}
+            if fill:   # complete missing details of the saved client with what was typed
+                conn.execute("UPDATE clients SET "+",".join(f"{k}=?" for k in fill)+" WHERE id=?",list(fill.values())+[ex['id']])
+        else:
+            cols="name,trn,address,country,telephone,email"
+            vals=[cname,data.get('client_trn',''),data.get('client_address',''),data.get('client_country',''),data.get('client_telephone',''),data.get('client_email','')]
+            cur=conn.execute(f"INSERT INTO clients({cols}) VALUES(?,?,?,?,?,?)"+(" RETURNING id" if USE_PG else ""),vals)
+            if USE_PG:
+                r=cur.fetchone(); data['client_id']=r['id'] if r else None
+            else:
+                data['client_id']=conn.execute('SELECT last_insert_rowid()',()).fetchone()[0]
+            auto_client=cname
+            flash(f'Client "{cname}" was added to the Clients list.','info')
     if iid:
         _p='%s' if USE_PG else '?'
         sets=', '.join(f"{k}={_p}" for k in data if k!='created_by')
@@ -814,6 +833,7 @@ def _save_inv_impl(iid,s,held):
         flash(f'Invoice saved, but the PDF could not be regenerated: {e}','warning')
     if pdf: conn.execute("UPDATE invoices SET pdf_path=? WHERE id=?",(pdf,iid)); conn.commit()
     conn.close(); audit(lbl,data['invoice_number'])
+    if auto_client: audit('CLIENT_ADDED',f'{auto_client} (auto, from invoice)')
     flash('Invoice saved successfully!','success')
     return redirect(url_for('view_invoice',iid=iid))
 
