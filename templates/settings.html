@@ -3,7 +3,7 @@
 <form method="POST" enctype="multipart/form-data"><div class="row g-4" style="max-width:900px;">
 <div class="col-lg-6"><div class="pc"><div class="ph"><i class="bi bi-cash-coin me-1"></i>Currency</div><div style="padding:18px;">
   <div class="mb-3"><label class="form-label">Currency</label><select name="currency" class="form-select">{% for c in ['AED','USD','EUR','GBP','SAR'] %}<option value="{{ c }}" {{ 'selected' if s.get('currency','AED')==c }}>{{ c }}</option>{% endfor %}</select></div>
-  <p class="text-muted mb-0" style="font-size:12px;"><i class="bi bi-info-circle me-1"></i>Bank details are set per company under <a href="{{ url_for('companies') }}">Companies</a>.</p>
+  <p class="text-muted mb-0" style="font-size:12px;"><i class="bi bi-info-circle me-1"></i>Bank details are set per company under <a href="#companies">Companies</a> below.</p>
 </div></div></div>
 <div class="col-lg-6"><div class="pc"><div class="ph"><i class="bi bi-sliders me-1"></i>Invoice Defaults</div><div style="padding:18px;">
   <div class="mb-3"><label class="form-label">Default Company</label><select name="default_company_id" class="form-select">{% for co in companies %}<option value="{{ co.id }}" {{ 'selected' if s.get('default_company_id','1')==co.id|string }}>{{ co.code }} – {{ co.name[:30] }}</option>{% endfor %}</select></div>
@@ -15,7 +15,44 @@
     <input type="file" name="logo" class="form-control" accept="image/*"></div>
 </div></div></div>
 <div class="col-12">
-  <div class="alert alert-info" style="font-size:13px;"><i class="bi bi-info-circle me-1"></i>To manage companies, their names, TRNs, addresses, stamps and logos — go to <a href="{{ url_for('companies') }}">Companies section</a>.</div>
   <button type="submit" class="btn ba px-5"><i class="bi bi-save me-1"></i>Save Settings</button>
 </div>
-</div></form>{% endblock %}
+</div></form>
+
+<div id="companies" class="mt-5">
+<form method="POST" action="{{ url_for('bulk_delete_companies') }}" onsubmit="return confirm('Delete selected companies?')" id="bulkForm"></form>
+<div class="pc">
+  <div class="ph"><i class="bi bi-building me-1"></i>Companies
+    <span class="ms-auto d-flex gap-2">
+      <button type="submit" form="bulkForm" class="btn btn-sm btn-outline-danger" style="font-size:11px;"><i class="bi bi-trash me-1"></i>Delete Selected</button>
+      <a href="{{ url_for('new_company') }}" class="btn btn-sm ba" style="font-size:11px;"><i class="bi bi-plus-circle me-1"></i>Add Company</a>
+    </span>
+  </div>
+  <div class="table-responsive">
+    <table class="table gt mb-0">
+      <thead><tr>
+        <th style="width:36px;"><input type="checkbox" id="selAll" onchange="document.querySelectorAll('.coChk').forEach(function(c){c.checked=this.checked;},this)"></th>
+        <th>Code</th><th>Company Name</th><th>TRN</th><th>Address</th><th>Tel</th><th>Bank Account</th><th>Status</th><th>Actions</th>
+      </tr></thead>
+      <tbody>
+      {% for co in all_companies %}<tr>
+        <td><input type="checkbox" name="ids[]" value="{{ co.id }}" class="coChk" form="bulkForm"></td>
+        <td><span class="co-pill" style="font-size:12px;font-weight:700;">{{ co.code }}</span></td>
+        <td><strong>{{ co.name }}</strong></td>
+        <td style="font-size:12px;">{{ co.trn or '—' }}</td>
+        <td style="font-size:12px;">{{ (co.address or '')[:35] }}{% if co.address and co.address|length > 35 %}…{% endif %}</td>
+        <td style="font-size:12px;">{{ co.telephone or '—' }}</td>
+        <td style="font-size:12px;">{% if co.bank_iban or co.bank_account %}<span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ co.bank_name or 'Set' }}</span>{% else %}<a href="{{ url_for('edit_company',cid=co.id) }}#bank" class="text-decoration-none"><i class="bi bi-plus-circle me-1"></i>Add bank account</a>{% endif %}</td>
+        <td><span class="{{ 'badge-on' if co.is_active else 'badge-off' }}">{{ 'Active' if co.is_active else 'Inactive' }}</span></td>
+        <td><div class="d-flex gap-1">
+          <a href="{{ url_for('edit_company',cid=co.id) }}" class="btn btn-sm bg"><i class="bi bi-pencil"></i></a>
+          <form method="POST" action="{{ url_for('delete_company',cid=co.id) }}" onsubmit="return confirm('Delete company {{ co.name }}? This cannot be undone.')">
+            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+          </form>
+        </div></td>
+      </tr>{% else %}<tr><td colspan="9" class="text-center text-muted py-4">No companies.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</div>{% endblock %}

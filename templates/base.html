@@ -39,14 +39,11 @@
   {% endif %}
   {% if session.get('role') == 'admin' %}
   <div class="nl">Admin</div>
-  <a href="{{ url_for('companies') }}" class="sl {% if 'compan' in (request.endpoint or '') %}on{% endif %}"><i class="bi bi-building"></i>Companies</a>
   <a href="{{ url_for('signatories') }}" class="sl {% if request.endpoint=='signatories' %}on{% endif %}"><i class="bi bi-pen-fill"></i>Signatories &amp; Stamps</a>
   <a href="{{ url_for('users') }}" class="sl {% if 'user' in (request.endpoint or '') %}on{% endif %}"><i class="bi bi-person-gear"></i>Users</a>
-  <a href="{{ url_for('company_settings') }}" class="sl {% if request.endpoint=='company_settings' %}on{% endif %}"><i class="bi bi-gear-fill"></i>Settings</a>
+  <a href="{{ url_for('company_settings') }}" class="sl {% if request.endpoint=='company_settings' or 'compan' in (request.endpoint or '') %}on{% endif %}"><i class="bi bi-gear-fill"></i>Settings</a>
   <a href="{{ url_for('audit_log') }}" class="sl {% if request.endpoint=='audit_log' %}on{% endif %}"><i class="bi bi-journal-text"></i>Audit Log</a>
-  <a href="{{ url_for('backup') }}" class="sl"><i class="bi bi-cloud-arrow-down-fill"></i>Download Backup (Excel)</a>
-  <a href="{{ url_for('backup_zip') }}" class="sl"><i class="bi bi-file-earmark-zip-fill"></i>Download Full Backup (ZIP)</a>
-  <a href="{{ url_for('restore_backup') }}" class="sl {% if request.endpoint=='restore_backup' %}on{% endif %}"><i class="bi bi-cloud-arrow-up-fill"></i>Restore Backup</a>
+  <a href="{{ url_for('restore_backup') }}" class="sl {% if request.endpoint in ('restore_backup','backup','backup_zip') %}on{% endif %}"><i class="bi bi-cloud-arrow-down-fill"></i>Backup / Restore</a>
   {% endif %}
   <div class="nl">Account</div>
   <a href="{{ url_for('change_password') }}" class="sl {% if request.endpoint=='change_password' %}on{% endif %}"><i class="bi bi-key-fill"></i>Change Password</a>

@@ -1298,8 +1298,7 @@ def gen_pdf(iid):
 @app.route('/companies')
 @admin_req
 def companies():
-    conn=get_db(); rows=conn.execute("SELECT * FROM companies ORDER BY sort_order,code").fetchall(); conn.close()
-    return render_template('companies.html', companies=rows, s=gall())
+    return redirect(url_for('company_settings')+'#companies')
 
 @app.route('/companies/new', methods=['GET','POST'])
 @admin_req
@@ -1327,7 +1326,7 @@ def new_company():
              1,int(f.get('sort_order',99)),
              f.get('bank_name','').strip(),f.get('bank_iban','').strip(),f.get('bank_account','').strip(),f.get('bank_swift','').strip()))
         conn.commit(); conn.close(); audit('COMPANY_ADDED',code); flash('Company added.','success')
-        return redirect(url_for('companies'))
+        return redirect(url_for('company_settings')+'#companies')
     return render_template('company_form.html', co=None, mode='new', s=gall())
 
 @app.route('/companies/<int:cid>/edit', methods=['GET','POST'])
@@ -1356,7 +1355,7 @@ def edit_company(cid):
              1 if f.get('is_active') else 0,int(f.get('sort_order',99)),
              f.get('bank_name','').strip(),f.get('bank_iban','').strip(),f.get('bank_account','').strip(),f.get('bank_swift','').strip(),cid))
         conn.commit(); conn.close(); audit('COMPANY_EDITED',f.get('name')); flash('Company updated.','success')
-        return redirect(url_for('companies'))
+        return redirect(url_for('company_settings')+'#companies')
     conn.close()
     return render_template('company_form.html', co=co, mode='edit', s=gall())
 
@@ -1365,9 +1364,9 @@ def edit_company(cid):
 def delete_company(cid):
     conn=get_db()
     inv_count=conn.execute("SELECT COUNT(*) c FROM invoices WHERE company_id=? AND status='active'",(cid,)).fetchone()['c']
-    if inv_count>0: flash(f'Cannot delete: {inv_count} active invoices linked.','danger'); conn.close(); return redirect(url_for('companies'))
+    if inv_count>0: flash(f'Cannot delete: {inv_count} active invoices linked.','danger'); conn.close(); return redirect(url_for('company_settings')+'#companies')
     conn.execute("DELETE FROM companies WHERE id=?",(cid,)); conn.commit(); conn.close()
-    audit('COMPANY_DELETED',f'ID {cid}'); flash('Company deleted.','success'); return redirect(url_for('companies'))
+    audit('COMPANY_DELETED',f'ID {cid}'); flash('Company deleted.','success'); return redirect(url_for('company_settings')+'#companies')
 
 @app.route('/companies/bulk-delete', methods=['POST'])
 @admin_req
@@ -1380,7 +1379,7 @@ def bulk_delete_companies():
         if n==0:
             conn.execute("DELETE FROM companies WHERE id=?",(cid,)); deleted+=1
     conn.commit(); conn.close()
-    flash(f'Deleted {deleted} companies.','success'); return redirect(url_for('companies'))
+    flash(f'Deleted {deleted} companies.','success'); return redirect(url_for('company_settings')+'#companies')
 
 # ── API ────────────────────────────────────────────────────────────────────
 @app.route('/api/clients/search')
@@ -1605,8 +1604,8 @@ def company_settings():
                     conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('logo_path',?)",(f'uploads/logos/{fn}',))
         conn.commit(); conn.close(); audit('SETTINGS_UPDATED'); flash('Settings saved.','success')
         return redirect(url_for('company_settings'))
-    companies=get_companies()
-    return render_template('settings.html', s=gall(), companies=companies)
+    conn=get_db(); all_companies=conn.execute("SELECT * FROM companies ORDER BY sort_order,code").fetchall(); conn.close()
+    return render_template('settings.html', s=gall(), companies=get_companies(), all_companies=all_companies)
 
 # ── REPORTS ────────────────────────────────────────────────────────────────
 @app.route('/reports')
