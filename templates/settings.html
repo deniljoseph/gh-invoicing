@@ -1,25 +1,6 @@
 {% extends 'base.html' %}{% block title %}Settings{% endblock %}{% block pt %}Settings{% endblock %}
 {% block content %}
-<form method="POST" enctype="multipart/form-data"><div class="row g-4" style="max-width:900px;">
-<div class="col-lg-6"><div class="pc"><div class="ph"><i class="bi bi-cash-coin me-1"></i>Currency</div><div style="padding:18px;">
-  <div class="mb-3"><label class="form-label">Currency</label><select name="currency" class="form-select">{% for c in ['AED','USD','EUR','GBP','SAR'] %}<option value="{{ c }}" {{ 'selected' if s.get('currency','AED')==c }}>{{ c }}</option>{% endfor %}</select></div>
-  <p class="text-muted mb-0" style="font-size:12px;"><i class="bi bi-info-circle me-1"></i>Bank details are set per company under <a href="#companies">Companies</a> below.</p>
-</div></div></div>
-<div class="col-lg-6"><div class="pc"><div class="ph"><i class="bi bi-sliders me-1"></i>Invoice Defaults</div><div style="padding:18px;">
-  <div class="mb-3"><label class="form-label">Default Company</label><select name="default_company_id" class="form-select">{% for co in companies %}<option value="{{ co.id }}" {{ 'selected' if s.get('default_company_id','1')==co.id|string }}>{{ co.code }} – {{ co.name[:30] }}</option>{% endfor %}</select></div>
-  <div class="mb-3"><label class="form-label">Default Payment Terms</label><input type="text" name="default_payment_terms" class="form-control" value="{{ s.get('default_payment_terms','') }}"></div>
-  <div class="mb-3"><label class="form-label">Default Mode of Payment</label><input type="text" name="default_mode_of_payment" class="form-control" value="{{ s.get('default_mode_of_payment','') }}"></div>
-  <div class="mb-3"><label class="form-label">Default VAT Rate (%)</label><input type="number" name="default_vat_rate" class="form-control" value="{{ s.get('default_vat_rate','5') }}" step="0.01" min="0" max="100"></div>
-  <div class="mb-3"><label class="form-label">Sidebar Logo</label>
-    {% set logo=s.get('logo_path','') %}{% if logo %}<div class="mb-1"><img src="/static/{{ logo }}" style="height:38px;background:#222;padding:3px;border-radius:4px;filter:brightness(0) invert(1);"></div>{% endif %}
-    <input type="file" name="logo" class="form-control" accept="image/*"></div>
-</div></div></div>
-<div class="col-12">
-  <button type="submit" class="btn ba px-5"><i class="bi bi-save me-1"></i>Save Settings</button>
-</div>
-</div></form>
-
-<div id="companies" class="mt-5">
+<div id="companies" class="mb-5">
 <form method="POST" action="{{ url_for('bulk_delete_companies') }}" onsubmit="return confirm('Delete selected companies?')" id="bulkForm"></form>
 <div class="pc">
   <div class="ph"><i class="bi bi-building me-1"></i>Companies
@@ -55,4 +36,24 @@
     </table>
   </div>
 </div>
-</div>{% endblock %}
+</div>
+
+<form method="POST" enctype="multipart/form-data"><div class="row g-4" style="max-width:900px;">
+<div class="col-lg-6"><div class="pc"><div class="ph"><i class="bi bi-cash-coin me-1"></i>Currency</div><div style="padding:18px;">
+  <div class="mb-3"><label class="form-label">Currency</label><select name="currency" class="form-select">{% for c in ['AED','USD','EUR','GBP','SAR'] %}<option value="{{ c }}" {{ 'selected' if s.get('currency','AED')==c }}>{{ c }}</option>{% endfor %}</select></div>
+  <p class="text-muted mb-0" style="font-size:12px;"><i class="bi bi-info-circle me-1"></i>Bank details are set per company under <a href="#companies">Companies</a> below.</p>
+</div></div></div>
+<div class="col-lg-6"><div class="pc"><div class="ph"><i class="bi bi-sliders me-1"></i>Invoice Defaults</div><div style="padding:18px;">
+  <div class="mb-3"><label class="form-label">Default Company</label><select name="default_company_id" class="form-select">{% for co in companies %}<option value="{{ co.id }}" {{ 'selected' if s.get('default_company_id','1')==co.id|string }}>{{ co.code }} – {{ co.name[:30] }}</option>{% endfor %}</select></div>
+  <div class="mb-3"><label class="form-label">Default Payment Terms</label><input type="text" name="default_payment_terms" class="form-control" value="{{ s.get('default_payment_terms','') }}"></div>
+  <div class="mb-3"><label class="form-label">Default Mode of Payment</label><input type="text" name="default_mode_of_payment" class="form-control" value="{{ s.get('default_mode_of_payment','') }}"></div>
+  <div class="mb-3"><label class="form-label">Default VAT Rate (%)</label><input type="number" name="default_vat_rate" class="form-control" value="{{ s.get('default_vat_rate','5') }}" step="0.01" min="0" max="100"></div>
+  <div class="mb-3"><label class="form-label">Sidebar Logo</label>
+    {% set logo=s.get('logo_path','') %}{% if logo %}<div class="mb-1"><img src="/static/{{ logo }}" style="height:38px;background:#222;padding:3px;border-radius:4px;filter:brightness(0) invert(1);"></div>{% endif %}
+    <input type="file" name="logo" class="form-control" accept="image/*"></div>
+</div></div></div>
+<div class="col-12">
+  <button type="submit" class="btn ba px-5"><i class="bi bi-save me-1"></i>Save Settings</button>
+</div>
+</div></form>
+{% endblock %}
