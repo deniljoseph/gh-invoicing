@@ -22,6 +22,7 @@
       <span class="sb-logo-ph">GH</span>
     {% endif %}
     <div class="sb-sub">Invoice Management System</div>
+    <div class="sb-by">Made by <span>Denil Joseph</span></div>
   </div>
   <div class="nl">Main</div>
   {% if session.get('role') == 'admin' %}
@@ -48,7 +49,6 @@
   <div class="nl">Account</div>
   <a href="{{ url_for('change_password') }}" class="sl {% if request.endpoint=='change_password' %}on{% endif %}"><i class="bi bi-key-fill"></i>Change Password</a>
   <a href="{{ url_for('logout') }}" class="sl"><i class="bi bi-box-arrow-right"></i>Logout</a>
-  <div class="sb-ft">Made by <span>Denil Joseph</span></div>
 </nav>
 <div id="main">
   <div id="tb">
