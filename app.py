@@ -640,7 +640,7 @@ def invoices():
     conn=get_db()
     base="SELECT i.*,c.name as co_name,c.code as co_code,(SELECT t.id FROM invoices t WHERE t.id=i.converted_to_id AND t.status='active') AS tax_id FROM invoices i LEFT JOIN companies c ON i.company_id=c.id WHERE i.status='active'"
     params=[]
-    if q: base+=" AND (i.invoice_number LIKE ? OR i.client_name LIKE ?)"; params+=[f'%{q}%',f'%{q}%']
+    if q: base+=" AND (LOWER(i.invoice_number) LIKE LOWER(?) OR LOWER(i.client_name) LIKE LOWER(?))"; params+=[f'%{q}%',f'%{q}%']
     if co_id: base+=" AND i.company_id=?"; params.append(co_id)
     if inv_type: base+=" AND i.invoice_type=?"; params.append(inv_type)
     if not can_see_all_invoices(): base+=" AND i.created_by=?"; params.append(session.get('user_id'))
@@ -1406,7 +1406,7 @@ def bulk_delete_companies():
 @login_req
 def api_clients():
     q=request.args.get('q',''); conn=get_db()
-    rows=conn.execute("SELECT * FROM clients WHERE is_active=1 AND (name LIKE ? OR company_name LIKE ?) LIMIT 10",(f'%{q}%',f'%{q}%')).fetchall()
+    rows=conn.execute("SELECT * FROM clients WHERE is_active=1 AND (LOWER(name) LIKE LOWER(?) OR LOWER(company_name) LIKE LOWER(?)) ORDER BY name LIMIT 10",(f'%{q.strip()}%',f'%{q.strip()}%')).fetchall()
     conn.close(); return jsonify([dict(r) for r in rows])
 
 @app.route('/api/stamps/<int:company_id>')
@@ -1436,7 +1436,7 @@ def api_next_inv_num():
 @login_req
 def clients():
     q=request.args.get('q',''); conn=get_db()
-    if q: rows=conn.execute("SELECT * FROM clients WHERE is_active=1 AND (name LIKE ? OR company_name LIKE ? OR trn LIKE ?) ORDER BY name",(f'%{q}%',f'%{q}%',f'%{q}%')).fetchall()
+    if q: rows=conn.execute("SELECT * FROM clients WHERE is_active=1 AND (LOWER(name) LIKE LOWER(?) OR LOWER(company_name) LIKE LOWER(?) OR LOWER(trn) LIKE LOWER(?)) ORDER BY name",(f'%{q}%',f'%{q}%',f'%{q}%')).fetchall()
     else: rows=conn.execute("SELECT * FROM clients WHERE is_active=1 ORDER BY name").fetchall()
     conn.close(); return render_template('clients.html', clients=rows, q=q, s=gall())
 

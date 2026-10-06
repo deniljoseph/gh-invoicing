@@ -384,7 +384,8 @@ clSearch.addEventListener('input',function(){
       if(!data.length){clDrop.style.display='none';return;}
       data.forEach(function(c){
         var a=document.createElement('a');a.className='list-group-item list-group-item-action py-2';a.style.fontSize='13px';
-        a.innerHTML='<strong>'+c.name+'</strong>'+(c.trn?' <small class="text-muted">TRN: '+c.trn+'</small>':'');
+        var st=document.createElement('strong');st.textContent=c.name;a.appendChild(st);
+        if(c.trn){var sm=document.createElement('small');sm.className='text-muted';sm.textContent=' TRN: '+c.trn;a.appendChild(sm);}
         a.onclick=function(){fillClient(c);};clDrop.appendChild(a);
       });clDrop.style.display='block';
     });
