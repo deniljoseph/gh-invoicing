@@ -1941,9 +1941,8 @@ def _restore_full_zip(fi):
 
     try:
         for label, getroot in _FILE_ROOTS:
-            root = getroot(); tmp = root + '.restore_tmp'; old = root + '.restore_old'
-            for p in (tmp, old):
-                if os.path.exists(p): shutil.rmtree(p, ignore_errors=True)
+            root = getroot(); tmp = root + '.restore_tmp'
+            if os.path.exists(tmp): shutil.rmtree(tmp, ignore_errors=True)
             os.makedirs(tmp)
             prefix = f'files/{label}/'
             for p, e in entries.items():
@@ -1952,9 +1951,15 @@ def _restore_full_zip(fi):
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 with z.open(p) as src, open(dest, 'wb') as out: shutil.copyfileobj(src, out)
                 if e.get('mtime'): os.utime(dest, (e['mtime'], e['mtime']))
-            if os.path.exists(root): os.replace(root, old)
-            os.replace(tmp, root)
-            shutil.rmtree(old, ignore_errors=True)
+            # Don't rename root: it may be a mounted volume (os.replace -> Errno 18). Empty it and move files in.
+            os.makedirs(root, exist_ok=True)
+            for name in os.listdir(root):
+                fp = os.path.join(root, name)
+                if os.path.isdir(fp) and not os.path.islink(fp): shutil.rmtree(fp)
+                else: os.remove(fp)
+            for name in os.listdir(tmp):
+                shutil.move(os.path.join(tmp, name), os.path.join(root, name))
+            shutil.rmtree(tmp, ignore_errors=True)
         _ensure_upload_dirs()
     except Exception as ex:
         app.logger.exception('zip restore failed (files)')
