@@ -232,6 +232,12 @@ def init_db():
         'currency':'AED',
         'logo_path':'uploads/logos/GH_LOGO.jpg',
         'footer_path':'images/gh_footer_AE.png',
+        'footer_text':'www.geometry-home.ae',
+        'backup_drive_url':'',
+        'backup_drive_enabled':'0',
+        'backup_keep':'30',
+        'backup_last_run':'',
+        'backup_last_status':'',
         'default_payment_terms':'100% Advance Payment',
         'default_mode_of_payment':'Bank Transfer',
         'default_vat_rate':'5',
@@ -1037,10 +1043,11 @@ def gen_pdf(iid):
     W, H     = A4
     SM       = 14 * mm
     TM       = 12 * mm
-    FOOTER_H = 14 * mm
+    footer_text = (gall().get("footer_text", "www.geometry-home.ae") or "").strip()
+    FOOTER_H = 14 * mm if footer_text else 0
     FOOTER_GAP = 5 * mm
     CW       = W - 2 * SM
-    content_bottom = FOOTER_H + FOOTER_GAP + 4 * mm
+    content_bottom = (FOOTER_H + FOOTER_GAP + 4 * mm) if footer_text else (10 * mm)
 
     BK   = colors.black
     WH   = colors.white
@@ -1075,8 +1082,6 @@ def gen_pdf(iid):
         try: logo_img = RLImg(logo_src, width=33*mm, height=33*mm)
         except: pass
 
-    footer_src = os.path.join(BASE_DIR, "static", "images", "gh_footer_AE.png")
-
     co_name  = co.get("name",  "")
     co_trn   = co.get("trn",   "")
     co_all_addr = [x for x in [
@@ -1085,11 +1090,15 @@ def gen_pdf(iid):
     ] if x and x.strip()]
 
     def on_page(canv, doc):
+        if not footer_text: return
         canv.saveState()
-        if os.path.exists(footer_src):
-            canv.drawImage(footer_src, SM, FOOTER_GAP,
-                           width=CW, height=FOOTER_H,
-                           preserveAspectRatio=False)
+        canv.setFillColor(colors.HexColor("#2a2927"))
+        canv.rect(SM, FOOTER_GAP, CW, FOOTER_H, stroke=0, fill=1)
+        canv.setFillColor(colors.white)
+        fs = 11
+        while fs > 6 and canv.stringWidth(footer_text, "Helvetica", fs) > CW - 8*mm: fs -= 1
+        canv.setFont("Helvetica", fs)
+        canv.drawCentredString(SM + CW/2, FOOTER_GAP + FOOTER_H/2 - fs*0.35, footer_text)
         canv.restoreState()
 
     frame = Frame(SM, content_bottom, CW, H - TM - content_bottom,
@@ -1608,12 +1617,18 @@ def company_settings():
     if request.method=='POST':
         f=request.form; conn=get_db()
         for k in ['currency',
-                  'default_payment_terms','default_mode_of_payment','default_vat_rate','default_company_id']:
+                  'default_payment_terms','default_mode_of_payment','default_vat_rate','default_company_id',
+                  'footer_text','backup_drive_url','backup_keep']:
             if k in f:
                 if USE_PG:
                     conn.execute("INSERT INTO settings(key,value) VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",(k,f.get(k)))
                 else:
                     conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",(k,f.get(k)))
+        _bk = '1' if (f.get('backup_drive_enabled') and (f.get('backup_drive_url') or '').strip().startswith(WEBAPP_PREFIX)) else '0'
+        if USE_PG:
+            conn.execute("INSERT INTO settings(key,value) VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",('backup_drive_enabled',_bk))
+        else:
+            conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('backup_drive_enabled',?)",(_bk,))
         if 'logo' in request.files:
             fi=request.files['logo']
             if fi and fi.filename and allowed_file(fi.filename):
@@ -1625,7 +1640,8 @@ def company_settings():
         conn.commit(); conn.close(); audit('SETTINGS_UPDATED'); flash('Settings saved.','success')
         return redirect(url_for('company_settings'))
     conn=get_db(); all_companies=conn.execute("SELECT * FROM companies ORDER BY sort_order,code").fetchall(); conn.close()
-    return render_template('settings.html', s=gall(), companies=get_companies(), all_companies=all_companies)
+    return render_template('settings.html', s=gall(), companies=get_companies(), all_companies=all_companies,
+                           drive_ok=drive_configured())
 
 # ── REPORTS ────────────────────────────────────────────────────────────────
 @app.route('/reports')
@@ -1890,6 +1906,108 @@ def backup_zip():
     audit('FULL_BACKUP_CREATED', f"{sum(t['rows'] for t in man['tables'].values())} rows, {len(man['files'])} files")
     return send_file(tmp, as_attachment=True, download_name=f"GH_FullBackup_{now_dubai().strftime('%Y%m%d_%H%M%S')}.zip",
                      mimetype='application/zip')
+
+# ── DAILY BACKUP TO GOOGLE DRIVE (11:00 PM Dubai time) ─────────────────────
+import threading
+
+BACKUP_HOUR = 23   # 11 PM, Dubai time
+WEBAPP_PREFIX = 'https://script.google.com/'
+MAX_UPLOAD_MB = 35   # Apps Script request limit (~50 MB) after base64 growth
+
+def drive_configured():
+    return bool((os.environ.get('GDRIVE_WEBAPP_TOKEN') or '').strip())
+
+def _webapp_call(url, payload):
+    import requests
+    r = requests.post(url, data=json.dumps(payload), headers={'Content-Type': 'text/plain;charset=utf-8'}, timeout=600)
+    try:
+        return r.json()
+    except ValueError:
+        raise RuntimeError(f'Unexpected reply from Google (HTTP {r.status_code}). Check the Web app URL and that access is set to "Anyone".')
+
+def _upload_backup_drive(url, trigger='scheduled', keep=30):
+    """Build a full ZIP backup and hand it to the Apps Script web app, which saves it in the private Drive folder."""
+    import tempfile
+    url = (url or '').strip()
+    token = (os.environ.get('GDRIVE_WEBAPP_TOKEN') or '').strip()
+    if not token:
+        return False, 'Backup token is not set on the server (GDRIVE_WEBAPP_TOKEN).'
+    if not url.startswith(WEBAPP_PREFIX):
+        return False, 'Paste the Apps Script Web app URL (starts with https://script.google.com/).'
+    try:
+        ping = _webapp_call(url, {'token': token, 'action': 'ping'})
+        if not ping.get('ok'):
+            return False, f"Drive script refused: {ping.get('error', 'unknown error')}"
+        tmp = tempfile.TemporaryFile()
+        man = _build_full_backup(tmp); size = tmp.tell(); tmp.seek(0); data = tmp.read(); tmp.close()
+        if size > MAX_UPLOAD_MB * 1024 * 1024:
+            return False, f'Backup is {size/1024/1024:.1f} MB, above the {MAX_UPLOAD_MB} MB limit of the Drive script.'
+        name = f"GH_FullBackup_{now_dubai().strftime('%Y%m%d_%H%M%S')}.zip"
+        res = _webapp_call(url, {'token': token, 'action': 'upload', 'name': name, 'keep': keep,
+                                 'data': base64.b64encode(data).decode('ascii')})
+        if not res.get('ok'):
+            return False, f"Upload failed: {res.get('error', 'unknown error')}"
+    except Exception as ex:
+        app.logger.exception('drive backup failed')
+        return False, f'Drive backup failed: {ex}'
+    rows = sum(t['rows'] for t in man['tables'].values())
+    rem = res.get('removed') or 0
+    return True, (f"Uploaded {name} ({size/1024/1024:.2f} MB, {rows} rows, {len(man['files'])} files) to Drive"
+                  + (f"; removed {rem} old backup(s)" if rem else ''))
+
+def _claim_today(today):
+    """Atomically claim today's run so only one worker/process uploads it."""
+    conn = get_db()
+    try:
+        cur = conn.execute("UPDATE settings SET value=? WHERE key='backup_last_run' AND value<>?", (today, today))
+        n = cur.rowcount; conn.commit()
+    finally:
+        conn.close()
+    return n == 1
+
+def _keep_count(s):
+    try: return max(0, int(s.get('backup_keep', '30') or 30))
+    except ValueError: return 30
+
+def _run_scheduled_backup():
+    try:
+        s = gall()
+        folder = (s.get('backup_drive_url') or '').strip()
+        if s.get('backup_drive_enabled') != '1' or not folder: return
+        now = now_dubai()
+        if now.hour < BACKUP_HOUR: return
+        today = now.strftime('%Y-%m-%d')
+        if not _claim_today(today): return
+        ok, msg = _upload_backup_drive(folder, keep=_keep_count(s))
+        sset('backup_last_status', f"{now_dubai().strftime('%Y-%m-%d %H:%M')} - {'OK' if ok else 'FAILED'}: {msg}")
+        if not ok: sset('backup_last_run', '')   # allow a retry on the next check tonight
+    except Exception:
+        app.logger.exception('scheduled backup crashed')
+
+_sched_started = {'pid': None}
+def start_backup_scheduler():
+    """One background checker per process (safe under gunicorn: runs are de-duplicated in the database)."""
+    if _sched_started['pid'] == os.getpid(): return
+    _sched_started['pid'] = os.getpid()
+    def loop():
+        time.sleep(15)
+        while True:
+            _run_scheduled_backup()
+            time.sleep(60)
+    threading.Thread(target=loop, daemon=True, name='backup-scheduler').start()
+
+@app.before_request
+def _ensure_scheduler():
+    start_backup_scheduler()
+
+@app.route('/backup/drive-test', methods=['POST'])
+@admin_req
+def backup_drive_test():
+    folder = (request.form.get('backup_drive_url') or gset('backup_drive_url', '')).strip()
+    ok, msg = _upload_backup_drive(folder, trigger='manual test', keep=_keep_count(gall()))
+    flash(msg, 'success' if ok else 'danger')
+    audit('BACKUP_DRIVE_TEST', msg)
+    return redirect(url_for('company_settings') + '#backup')
 
 def _restore_full_zip(fi):
     """Verify first (nothing is touched unless every checksum matches), then restore database + files exactly."""

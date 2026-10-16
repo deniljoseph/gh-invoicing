@@ -125,8 +125,8 @@
         {% else %}<div style="color:#ccc;font-size:12px;">No stamp</div>{% endif %}
       </div>
     </div>
-    {% set footer=s.get('footer_path','') %}
-    {% if footer %}<img src="{{ url_for('static',filename=footer) }}" style="width:100%;border-radius:6px;">{% endif %}
+    {% set ftxt=(s.get('footer_text','www.geometry-home.ae') or '').strip() %}
+    {% if ftxt %}<div style="width:100%;border-radius:6px;background:#2a2927;color:#fff;text-align:center;padding:14px 10px;letter-spacing:2px;">{{ ftxt }}</div>{% endif %}
   </div>
 </div>
 {% endblock %}

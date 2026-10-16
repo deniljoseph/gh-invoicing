@@ -104,6 +104,10 @@ class PGCursor:
     def __init__(self, cur):
         self._cur = cur
 
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
     def fetchone(self):
         row = self._cur.fetchone()
         return DictRow(row) if row else None
