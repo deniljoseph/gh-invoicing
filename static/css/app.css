@@ -40,8 +40,15 @@ body{background:#f0f2f5;font-family:'Segoe UI',sans-serif;margin:0;}
 [data-bs-theme=dark] .form-label{color:#bbb;}
 .type-badge-TAX{background:#1a1a1a;color:#fff;font-size:10px;padding:2px 8px;border-radius:10px;}
 .type-badge-PROFORMA{background:#c8a96e;color:#fff;font-size:10px;padding:2px 8px;border-radius:10px;}
+body.sb-collapsed #sb{transform:translateX(-100%);}
+body.sb-collapsed #main{margin-left:0;}
+#sbBackdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1030;}
 @media(max-width:768px){
-  #sb{transform:translateX(-100%);}
-  #sb.sb-open{transform:translateX(0);}
-  #main{margin-left:0;}
+  #sb{transform:translateX(-100%);box-shadow:none;}
+  body.sb-open #sb{transform:translateX(0);box-shadow:4px 0 24px rgba(0,0,0,.35);}
+  body.sb-open #sbBackdrop{display:block;}
+  body.sb-open{overflow:hidden;}
+  #main{margin-left:0 !important;}
+  #tb{padding:10px 12px;}
+  #ct{padding:14px;}
 }
