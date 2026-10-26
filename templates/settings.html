@@ -52,11 +52,6 @@
     {% set logo=s.get('logo_path','') %}{% if logo %}<div class="mb-1"><img src="/static/{{ logo }}" style="height:38px;background:#222;padding:3px;border-radius:4px;filter:brightness(0) invert(1);"></div>{% endif %}
     <input type="file" name="logo" class="form-control" accept="image/*"></div>
 </div></div></div>
-<div class="col-lg-6"><div class="pc"><div class="ph"><i class="bi bi-layout-text-window-reverse me-1"></i>Invoice Footer</div><div style="padding:18px;">
-  <label class="form-label">Footer text (printed on every invoice PDF)</label>
-  <input type="text" name="footer_text" class="form-control" maxlength="120" value="{{ s.get('footer_text','') }}" placeholder="e.g. www.geometry-home.ae">
-  <p class="text-muted mt-2 mb-0" style="font-size:12px;"><i class="bi bi-info-circle me-1"></i>Leave blank to print no footer at all.</p>
-</div></div></div>
 <div class="col-lg-6" id="backup"><div class="pc"><div class="ph"><i class="bi bi-cloud-upload-fill me-1"></i>Daily Backup to Google Drive</div><div style="padding:18px;">
   <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="backup_drive_enabled" id="bkd" value="1" {{ 'checked' if s.get('backup_drive_enabled')=='1' }}>
     <label class="form-check-label" for="bkd">Upload a full backup every day at 11:00 PM (Dubai time)</label></div>

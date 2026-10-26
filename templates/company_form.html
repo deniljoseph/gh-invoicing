@@ -95,6 +95,12 @@
           <input type="text" name="bank_swift" class="form-control" value="{{ co.bank_swift if co and co.bank_swift else '' }}">
         </div>
 
+        <div class="col-12">
+          <label class="form-label">Invoice Footer <small class="text-muted fw-normal">(printed at the bottom of this company's invoice PDFs)</small></label>
+          <input type="text" name="footer_text" class="form-control" maxlength="120" value="{{ co.footer_text if co and co.footer_text else '' }}" placeholder="e.g. www.geometry-home.ae">
+          <small class="text-muted">Leave blank to print no footer for this company.</small>
+        </div>
+
         <div class="col-md-6">
           <label class="form-label">Company Logo <small class="text-muted fw-normal">(used in PDF header)</small></label>
           {% if co and co.logo_path %}

@@ -211,6 +211,7 @@ def init_db():
              ("invoices","converted_at","TEXT"),
              ("companies","bank_name","TEXT"),("companies","bank_iban","TEXT"),
              ("companies","bank_account","TEXT"),("companies","bank_swift","TEXT"),
+             ("companies","footer_text","TEXT"),
              ("users","permissions","TEXT")]
     for _t,_col,_typ in _migs:
         try:
@@ -248,6 +249,18 @@ def init_db():
             conn.execute("INSERT INTO settings(key,value) VALUES(%s,%s) ON CONFLICT(key) DO NOTHING", (k,v))
         else:
             conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k,v))
+
+    # One-time backfill: companies that have no footer yet inherit the old
+    # system-wide footer, so existing invoices look exactly as before.
+    try:
+        _ph = '%s' if USE_PG else '?'
+        _g = conn.execute(f"SELECT value FROM settings WHERE key={_ph}", ('footer_text',)).fetchone()
+        _gv = (_g[0] if _g else '') or ''
+        conn.execute(f"UPDATE companies SET footer_text={_ph} WHERE footer_text IS NULL", (_gv,))
+        conn.commit()
+    except Exception:
+        try: conn._conn.rollback()
+        except Exception: pass
 
     # Admin user
     if USE_PG:
@@ -1043,7 +1056,7 @@ def gen_pdf(iid):
     W, H     = A4
     SM       = 14 * mm
     TM       = 12 * mm
-    footer_text = (gall().get("footer_text", "www.geometry-home.ae") or "").strip()
+    footer_text = (co.get("footer_text") or "").strip()
     FOOTER_H = 14 * mm if footer_text else 0
     FOOTER_GAP = 5 * mm
     CW       = W - 2 * SM
@@ -1163,35 +1176,38 @@ def gen_pdf(iid):
     elems.append(Spacer(1,2*mm))
 
     # ── CUSTOMER + BANK ─────────────────────────────────────────────────
-    half=CW/2; cL=22*mm; cV=half-cL; bL=22*mm; bV=half-bL
+    half=CW/2; cL=22*mm; cC=3*mm; cV=half-cL-cC; bL=22*mm; bC=3*mm; bV=half-bL-bC
     bk    = bank_for_company(co, s)
     iban  = inv["bank_iban"]    or bk.get("bank_iban","")
     acct  = str(inv["bank_account"] or bk.get("bank_account",""))
     swift = inv["bank_swift"]   or bk.get("bank_swift","")
     curr  = inv["currency"]     or "AED"
     bname = inv["bank_name"]    or bk.get("bank_name","")
-    def row(ll,lv,rl,rv): return [P(ll,7.5),P(lv,7.5),P(rl,7.5),P(rv,7.5)]
-    # Full company name (Paragraph cells wrap automatically if it is ever too long)
+    # Colon lives in its own narrow column so wrapped lines (e.g. long
+    # addresses) stay aligned AFTER the colon, never underneath it.
+    def row(ll,lv,rl,rv): return [P(ll,7.5),P(":",7.5),P(lv,7.5),P(rl,7.5),P(":",7.5),P(rv,7.5)]
     co_name_short = co_name
     info = [
-        [P("Customer Details",8,True),P(""),P("Our Bank Details",8,True),P("")],
-        row("Name",   ": "+(inv["client_name"]      or ""),"Name",      ": "+co_name_short),
-        row("TRN",    ": "+(inv["client_trn"]        or ""),"IBAN No",   ": "+iban),
-        row("Address",": "+(inv["client_address"]    or ""),"Account No",": "+acct),
-        row("Country",": "+(inv["client_country"]    or ""),"Swift Code",": "+swift),
-        row("Tel No", ": "+(inv["client_telephone"]  or ""),"Currency",  ": "+curr),
-        row("Email",  ": "+(inv["client_email"]      or ""),"Bank Name", ": "+bname),
+        [P("Customer Details",8,True),P(""),P(""),P("Our Bank Details",8,True),P(""),P("")],
+        row("Name",   inv["client_name"]      or "","Name",      co_name_short),
+        row("TRN",    inv["client_trn"]        or "","IBAN No",   iban),
+        row("Address",inv["client_address"]    or "","Account No",acct),
+        row("Country",inv["client_country"]    or "","Swift Code",swift),
+        row("Tel No", inv["client_telephone"]  or "","Currency",  curr),
+        row("Email",  inv["client_email"]      or "","Bank Name", bname),
     ]
-    it2 = Table(info, colWidths=[cL,cV,bL,bV])
+    it2 = Table(info, colWidths=[cL,cC,cV,bL,bC,bV])
     it2.setStyle(TableStyle([
-        ("FONTSIZE",(0,0),(-1,-1),7.5),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+        ("FONTSIZE",(0,0),(-1,-1),7.5),("VALIGN",(0,0),(-1,-1),"TOP"),
         ("TOPPADDING",(0,0),(-1,-1),1.5),("BOTTOMPADDING",(0,0),(-1,-1),1.5),
         ("LEFTPADDING",(0,0),(-1,-1),4),("RIGHTPADDING",(0,0),(-1,-1),4),
-        ("FONTNAME",(0,0),(3,0),"Helvetica-Bold"),
-        ("SPAN",(0,0),(1,0)),("SPAN",(2,0),(3,0)),
-        ("LINEBELOW",(0,0),(1,0),0.5,BGRD),("LINEBELOW",(2,0),(3,0),0.5,BGRD),
-        ("BOX",(0,0),(1,-1),0.5,BGRD),("BOX",(2,0),(3,-1),0.5,BGRD),
-        ("LINEBEFORE",(2,0),(2,-1),1,BGRD),
+        ("LEFTPADDING",(1,0),(1,-1),0),("RIGHTPADDING",(1,0),(1,-1),0),
+        ("LEFTPADDING",(4,0),(4,-1),0),("RIGHTPADDING",(4,0),(4,-1),0),
+        ("FONTNAME",(0,0),(5,0),"Helvetica-Bold"),
+        ("SPAN",(0,0),(2,0)),("SPAN",(3,0),(5,0)),
+        ("LINEBELOW",(0,0),(2,0),0.5,BGRD),("LINEBELOW",(3,0),(5,0),0.5,BGRD),
+        ("BOX",(0,0),(2,-1),0.5,BGRD),("BOX",(3,0),(5,-1),0.5,BGRD),
+        ("LINEBEFORE",(3,0),(3,-1),1,BGRD),
     ]))
     elems.append(it2)
     elems.append(Spacer(1,2*mm))
@@ -1344,8 +1360,8 @@ def new_company():
                     if field=='logo': logo_path=f'uploads/{subdir}/{fn}'
                     else: stamp_path=f'uploads/{subdir}/{fn}'
         code=f.get('code','').upper().strip()
-        _coph = ','.join(['%s']*21) if USE_PG else ','.join(['?']*21)
-        _co_sql = f"INSERT INTO companies(code,name,address,address2,address3,address4,telephone,email,trn,website,logo_path,stamp_path,letterhead_path,invoice_prefix,proforma_prefix,is_active,sort_order,bank_name,bank_iban,bank_account,bank_swift) VALUES({_coph})"
+        _coph = ','.join(['%s']*22) if USE_PG else ','.join(['?']*22)
+        _co_sql = f"INSERT INTO companies(code,name,address,address2,address3,address4,telephone,email,trn,website,logo_path,stamp_path,letterhead_path,invoice_prefix,proforma_prefix,is_active,sort_order,bank_name,bank_iban,bank_account,bank_swift,footer_text) VALUES({_coph})"
         conn.execute(_co_sql,
             (code,f.get('name'),f.get('address'),f.get('address2',''),
              f.get('address3',''),f.get('address4',''),
@@ -1353,7 +1369,7 @@ def new_company():
              f.get('trn'),f.get('website'),logo_path,stamp_path,lh_path,
              f.get('invoice_prefix',f'{code}-INV'),f.get('proforma_prefix',f'{code}-PINV'),
              1,int(f.get('sort_order',99)),
-             f.get('bank_name','').strip(),f.get('bank_iban','').strip(),f.get('bank_account','').strip(),f.get('bank_swift','').strip()))
+             f.get('bank_name','').strip(),f.get('bank_iban','').strip(),f.get('bank_account','').strip(),f.get('bank_swift','').strip(),f.get('footer_text','').strip()))
         conn.commit(); conn.close(); audit('COMPANY_ADDED',code); flash('Company added.','success')
         return redirect(url_for('company_settings')+'#companies')
     return render_template('company_form.html', co=None, mode='new', s=gall())
@@ -1374,7 +1390,7 @@ def edit_company(cid):
                     if field=='logo': logo_path=f'uploads/{subdir}/{fn}'
                     else: stamp_path=f'uploads/{subdir}/{fn}'
         _p2='%s' if USE_PG else '?'
-        _cu_sql=f"UPDATE companies SET name={_p2},address={_p2},address2={_p2},address3={_p2},address4={_p2},telephone={_p2},email={_p2},trn={_p2},website={_p2},logo_path={_p2},stamp_path={_p2},invoice_prefix={_p2},proforma_prefix={_p2},is_active={_p2},sort_order={_p2},bank_name={_p2},bank_iban={_p2},bank_account={_p2},bank_swift={_p2} WHERE id={_p2}"
+        _cu_sql=f"UPDATE companies SET name={_p2},address={_p2},address2={_p2},address3={_p2},address4={_p2},telephone={_p2},email={_p2},trn={_p2},website={_p2},logo_path={_p2},stamp_path={_p2},invoice_prefix={_p2},proforma_prefix={_p2},is_active={_p2},sort_order={_p2},bank_name={_p2},bank_iban={_p2},bank_account={_p2},bank_swift={_p2},footer_text={_p2} WHERE id={_p2}"
         conn.execute(_cu_sql,
             (f.get('name'),f.get('address'),f.get('address2',''),
              f.get('address3',''),f.get('address4',''),
@@ -1382,7 +1398,7 @@ def edit_company(cid):
              f.get('trn'),f.get('website'),logo_path,stamp_path,
              f.get('invoice_prefix'),f.get('proforma_prefix'),
              1 if f.get('is_active') else 0,int(f.get('sort_order',99)),
-             f.get('bank_name','').strip(),f.get('bank_iban','').strip(),f.get('bank_account','').strip(),f.get('bank_swift','').strip(),cid))
+             f.get('bank_name','').strip(),f.get('bank_iban','').strip(),f.get('bank_account','').strip(),f.get('bank_swift','').strip(),f.get('footer_text','').strip(),cid))
         conn.commit(); conn.close(); audit('COMPANY_EDITED',f.get('name')); flash('Company updated.','success')
         return redirect(url_for('company_settings')+'#companies')
     conn.close()
@@ -1618,7 +1634,7 @@ def company_settings():
         f=request.form; conn=get_db()
         for k in ['currency',
                   'default_payment_terms','default_mode_of_payment','default_vat_rate','default_company_id',
-                  'footer_text','backup_drive_url','backup_keep']:
+                  'backup_drive_url','backup_keep']:
             if k in f:
                 if USE_PG:
                     conn.execute("INSERT INTO settings(key,value) VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",(k,f.get(k)))
